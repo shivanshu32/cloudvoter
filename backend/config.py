@@ -20,7 +20,7 @@ NORMAL_CYCLE_WAIT = 31 * 60  # 31 minutes between voting cycles
 VOTE_RESPONSE_WAIT = 3       # Wait time after clicking vote button
 
 # Browser configuration
-HEADLESS_MODE = False
+HEADLESS_MODE = True
 BROWSER_WIDTH = 1920
 BROWSER_HEIGHT = 1080
 

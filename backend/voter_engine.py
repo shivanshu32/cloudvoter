@@ -233,7 +233,7 @@ class VoterInstance:
             
             # Launch browser with proxy
             self.browser = await self.playwright.chromium.launch(
-                headless=False,
+                headless=True,
                 proxy={
                     'server': self.proxy_config['server'],
                     'username': self.proxy_config['username'],
@@ -297,7 +297,7 @@ class VoterInstance:
             
             # Launch browser with proxy
             self.browser = await self.playwright.chromium.launch(
-                headless=False,
+                headless=True,
                 proxy={
                     'server': self.proxy_config['server'],
                     'username': self.proxy_config['username'],
