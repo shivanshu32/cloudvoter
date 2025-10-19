@@ -890,9 +890,7 @@ async def check_ready_instances():
                             
                             if instance_id and time_of_click_str and status == 'success':
                                 vote_time = datetime.fromisoformat(time_of_click_str)
-                                # Make timezone-aware if naive (assume UTC)
-                                if vote_time.tzinfo is None:
-                                    vote_time = vote_time.replace(tzinfo=timezone.utc)
+                                # Server is IST, timestamps are IST, no conversion needed
                                 # Keep only the most recent vote time for each instance
                                 if instance_id not in instance_last_vote or vote_time > instance_last_vote[instance_id]:
                                     instance_last_vote[instance_id] = vote_time
@@ -902,7 +900,8 @@ async def check_ready_instances():
                 logger.error(f"❌ Error reading voting logs: {e}")
         
         # Check each session for cooldown status
-        current_time = datetime.now(timezone.utc)
+        # Server is in IST timezone, datetime.now() returns IST
+        current_time = datetime.now()
         ready_count = 0
         cooldown_count = 0
         
