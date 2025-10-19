@@ -1,0 +1,267 @@
+"""
+Vote Logger for CloudVoter
+Tracks voting history and statistics
+Enhanced to match googleloginautomate's comprehensive logging
+"""
+
+import csv
+import json
+import os
+import threading
+import time
+from datetime import datetime
+from typing import List, Dict, Optional
+
+class VoteLogger:
+    """Logger for voting attempts and results"""
+    
+    def __init__(self, log_file='voting_logs.csv'):
+        self.log_file = log_file
+        self._file_lock = threading.Lock()  # Thread-safe file access
+        self.fieldnames = [
+            'timestamp',
+            'instance_id', 
+            'instance_name',
+            'time_of_click',
+            'status',
+            'voting_url',
+            'cooldown_message',
+            'failure_type',
+            'failure_reason',
+            'initial_vote_count',
+            'final_vote_count',
+            'vote_count_change',
+            'proxy_ip',
+            'session_id',
+            'click_attempts',
+            'error_message',
+            'browser_closed'
+        ]
+        self._ensure_log_file()
+    
+    def _ensure_log_file(self):
+        """Ensure log file exists with headers"""
+        with self._file_lock:  # Thread-safe file creation
+            if not os.path.exists(self.log_file):
+                with open(self.log_file, 'w', newline='', encoding='utf-8') as f:
+                    writer = csv.DictWriter(f, fieldnames=self.fieldnames)
+                    writer.writeheader()
+    
+    def log_vote_attempt(self, 
+                        instance_id: int,
+                        instance_name: str,
+                        time_of_click: datetime,
+                        status: str,
+                        voting_url: str = "",
+                        cooldown_message: str = "",
+                        failure_type: str = "",
+                        failure_reason: str = "",
+                        initial_vote_count: Optional[int] = None,
+                        final_vote_count: Optional[int] = None,
+                        proxy_ip: str = "",
+                        session_id: str = "",
+                        click_attempts: int = 1,
+                        error_message: str = "",
+                        browser_closed: bool = False) -> None:
+        """
+        Log a voting attempt to CSV
+        
+        Args:
+            instance_id: Instance identifier
+            instance_name: Human readable instance name
+            time_of_click: When the vote button was clicked
+            status: 'success' or 'failed'
+            voting_url: URL that was voted on
+            cooldown_message: Any cooldown message detected
+            failure_type: Type of failure (cooldown, authentication, technical, etc.)
+            failure_reason: Detailed failure reason message
+            initial_vote_count: Vote count before clicking
+            final_vote_count: Vote count after clicking
+            proxy_ip: IP address used for voting
+            session_id: BrightData session ID
+            click_attempts: Number of click attempts made
+            error_message: Any error encountered
+            browser_closed: Whether browser was closed after attempt
+        """
+        max_retries = 3
+        retry_delay = 0.1
+        
+        for attempt in range(max_retries):
+            try:
+                vote_count_change = None
+                if initial_vote_count is not None and final_vote_count is not None:
+                    vote_count_change = final_vote_count - initial_vote_count
+                
+                log_entry = {
+                    'timestamp': datetime.now().isoformat(),
+                    'instance_id': instance_id,
+                    'instance_name': instance_name,
+                    'time_of_click': time_of_click.isoformat(),
+                    'status': status,
+                    'voting_url': voting_url,
+                    'cooldown_message': cooldown_message,
+                    'failure_type': failure_type,
+                    'failure_reason': failure_reason,
+                    'initial_vote_count': initial_vote_count,
+                    'final_vote_count': final_vote_count,
+                    'vote_count_change': vote_count_change,
+                    'proxy_ip': proxy_ip,
+                    'session_id': session_id,
+                    'click_attempts': click_attempts,
+                    'error_message': error_message,
+                    'browser_closed': browser_closed
+                }
+                
+                # CRITICAL: Thread-safe CSV writing with retry mechanism
+                with self._file_lock:
+                    with open(self.log_file, 'a', newline='', encoding='utf-8') as file:
+                        writer = csv.DictWriter(file, fieldnames=self.fieldnames)
+                        writer.writerow(log_entry)
+                        file.flush()  # Ensure data is written immediately
+                
+                # Success - break retry loop
+                break
+                
+            except (PermissionError, OSError) as e:
+                if attempt < max_retries - 1:
+                    print(f"CSV write attempt {attempt + 1} failed, retrying in {retry_delay}s: {e}")
+                    time.sleep(retry_delay)
+                    retry_delay *= 2  # Exponential backoff
+                else:
+                    print(f"CRITICAL: Failed to log vote attempt after {max_retries} attempts: {e}")
+            except Exception as e:
+                print(f"Error logging vote attempt: {e}")
+                break
+    
+    # Keep old method for backward compatibility
+    def log_vote(self, instance_id: int, ip: str, status: str, message: str = '', vote_count: int = 0):
+        """Legacy method - redirects to log_vote_attempt"""
+        self.log_vote_attempt(
+            instance_id=instance_id,
+            instance_name=f"Instance_{instance_id}",
+            time_of_click=datetime.now(),
+            status=status,
+            failure_reason=message,
+            proxy_ip=ip,
+            browser_closed=False
+        )
+    
+    def get_recent_votes(self, limit: int = 100) -> List[Dict]:
+        """Get recent voting history"""
+        votes = []
+        
+        try:
+            if not os.path.exists(self.log_file):
+                return votes
+            
+            with open(self.log_file, 'r', newline='', encoding='utf-8') as f:
+                reader = csv.DictReader(f)
+                all_votes = list(reader)
+                
+                # Get last N votes
+                recent_votes = all_votes[-limit:] if len(all_votes) > limit else all_votes
+                
+                for row in reversed(recent_votes):
+                    votes.append({
+                        'timestamp': row.get('timestamp', ''),
+                        'instance_id': row.get('instance_id', ''),
+                        'ip': row.get('ip', ''),
+                        'status': row.get('status', ''),
+                        'message': row.get('message', ''),
+                        'vote_count': row.get('vote_count', '0')
+                    })
+            
+            return votes
+            
+        except Exception as e:
+            print(f"Error getting recent votes: {e}")
+            return votes
+    
+    def get_success_rate(self, instance_id: Optional[int] = None) -> Dict:
+        """
+        Calculate success rate from logged data
+        
+        Args:
+            instance_id: Optional instance ID to filter by
+            
+        Returns:
+            Dictionary with success statistics
+        """
+        try:
+            if not os.path.exists(self.log_file):
+                return {"total": 0, "successful": 0, "failed": 0, "success_rate": 0.0}
+            
+            total = 0
+            successful = 0
+            failed = 0
+            
+            with open(self.log_file, 'r', encoding='utf-8') as file:
+                reader = csv.DictReader(file)
+                for row in reader:
+                    if instance_id is None or int(row.get('instance_id', 0)) == instance_id:
+                        total += 1
+                        if row.get('status') == 'success':
+                            successful += 1
+                        else:
+                            failed += 1
+            
+            success_rate = (successful / total * 100) if total > 0 else 0.0
+            
+            return {
+                "total": total,
+                "successful": successful, 
+                "failed": failed,
+                "success_rate": success_rate
+            }
+            
+        except Exception as e:
+            print(f"Error calculating success rate: {e}")
+            return {"total": 0, "successful": 0, "failed": 0, "success_rate": 0.0}
+    
+    def get_statistics(self) -> Dict:
+        """Get voting statistics"""
+        stats = {
+            'total_attempts': 0,
+            'successful_votes': 0,
+            'failed_votes': 0,
+            'hourly_limits': 0,
+            'success_rate': 0.0,
+            'active_instances': 0
+        }
+        
+        try:
+            if not os.path.exists(self.log_file):
+                return stats
+            
+            with open(self.log_file, 'r', newline='', encoding='utf-8') as f:
+                reader = csv.DictReader(f)
+                
+                instance_ids = set()
+                
+                for row in reader:
+                    stats['total_attempts'] += 1
+                    
+                    status = row.get('status', '').lower()
+                    
+                    if 'success' in status:
+                        stats['successful_votes'] += 1
+                    elif 'fail' in status or 'error' in status:
+                        stats['failed_votes'] += 1
+                    elif 'hourly' in status or 'limit' in status or 'cooldown' in status:
+                        stats['hourly_limits'] += 1
+                    
+                    instance_id = row.get('instance_id', '')
+                    if instance_id:
+                        instance_ids.add(instance_id)
+                
+                stats['active_instances'] = len(instance_ids)
+                
+                # Calculate success rate
+                if stats['total_attempts'] > 0:
+                    stats['success_rate'] = (stats['successful_votes'] / stats['total_attempts']) * 100
+            
+            return stats
+            
+        except Exception as e:
+            print(f"Error getting statistics: {e}")
+            return stats

@@ -1,0 +1,88 @@
+╔═══════════════════════════════════════════════════════════════╗
+║                                                               ║
+║   ⚠️  IMPORTANT: SESSION DATA REQUIRED  ⚠️                   ║
+║                                                               ║
+╚═══════════════════════════════════════════════════════════════╝
+
+CloudVoter needs the saved browser sessions from googleloginautomate!
+
+┌───────────────────────────────────────────────────────────────┐
+│  BEFORE DEPLOYING OR RUNNING CLOUDVOTER:                      │
+│                                                               │
+│  1. Run this command in cloudvoter folder:                    │
+│                                                               │
+│     copy_sessions.bat                                         │
+│                                                               │
+│  2. This will copy all saved sessions from:                   │
+│     googleloginautomate\brightdata_session_data\              │
+│     to:                                                       │
+│     cloudvoter\brightdata_session_data\                       │
+│                                                               │
+└───────────────────────────────────────────────────────────────┘
+
+┌───────────────────────────────────────────────────────────────┐
+│  WHY IS THIS IMPORTANT?                                       │
+│                                                               │
+│  Session data contains:                                       │
+│  ✓ Google login cookies (already logged in)                  │
+│  ✓ Last vote timestamps (for cooldown detection)             │
+│  ✓ Browser state (localStorage, sessionStorage)              │
+│  ✓ Proxy IP assignments                                      │
+│                                                               │
+│  WITHOUT session data:                                       │
+│  ✗ Need to login to Google manually for each instance        │
+│  ✗ No cooldown history (system doesn't know when to launch)  │
+│  ✗ No saved voting progress                                  │
+│                                                               │
+│  WITH session data:                                           │
+│  ✓ Automatic launching of ready instances                    │
+│  ✓ Already logged in (no manual login needed)                │
+│  ✓ Cooldown detection works (31-minute cycles)               │
+│  ✓ System works exactly like googleloginautomate!            │
+│                                                               │
+└───────────────────────────────────────────────────────────────┘
+
+┌───────────────────────────────────────────────────────────────┐
+│  QUICK STEPS:                                                 │
+│                                                               │
+│  Step 1: Open Command Prompt in cloudvoter folder            │
+│  Step 2: Run: copy_sessions.bat                              │
+│  Step 3: Wait for copy to complete                           │
+│  Step 4: Verify: dir brightdata_session_data                 │
+│  Step 5: You should see instance_1, instance_2, etc.         │
+│  Step 6: Now you can deploy CloudVoter!                      │
+│                                                               │
+└───────────────────────────────────────────────────────────────┘
+
+┌───────────────────────────────────────────────────────────────┐
+│  WHAT GETS COPIED:                                            │
+│                                                               │
+│  brightdata_session_data/                                     │
+│  ├── instance_1/                                              │
+│  │   ├── cookies.json          ← Google login cookies        │
+│  │   ├── session_info.json     ← Last vote time, IP, etc.    │
+│  │   └── storage_state.json    ← Full browser state          │
+│  ├── instance_2/                                              │
+│  ├── instance_3/                                              │
+│  └── ... (all your saved sessions)                           │
+│                                                               │
+└───────────────────────────────────────────────────────────────┘
+
+┌───────────────────────────────────────────────────────────────┐
+│  FOR MORE INFORMATION:                                        │
+│                                                               │
+│  Read: SESSION_DATA_SETUP.md                                 │
+│  - Complete guide on session data                            │
+│  - Troubleshooting                                            │
+│  - Backup and restore                                         │
+│  - Syncing between systems                                    │
+│                                                               │
+└───────────────────────────────────────────────────────────────┘
+
+═══════════════════════════════════════════════════════════════
+
+DON'T FORGET TO COPY SESSION DATA BEFORE DEPLOYING!
+
+Run: copy_sessions.bat
+
+═══════════════════════════════════════════════════════════════

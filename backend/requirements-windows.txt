@@ -1,0 +1,9 @@
+Flask==3.0.0
+Flask-CORS==4.0.0
+Flask-SocketIO==5.3.5
+python-socketio==5.10.0
+playwright==1.48.0
+python-dotenv==1.0.0
+# For Windows local testing, we'll use Flask's built-in development server
+# No additional async server needed for local testing
+# Using playwright 1.48.0 which has pre-built wheels for Python 3.13

@@ -1,0 +1,39 @@
+version: '3.8'
+
+services:
+  cloudvoter:
+    build: .
+    container_name: cloudvoter
+    ports:
+      - "5000:5000"
+    environment:
+      - FLASK_ENV=production
+      - SECRET_KEY=${SECRET_KEY:-cloudvoter-secret-key-change-me}
+      - BRIGHT_DATA_USERNAME=${BRIGHT_DATA_USERNAME:-hl_47ba96ab}
+      - BRIGHT_DATA_PASSWORD=${BRIGHT_DATA_PASSWORD:-tcupn0cw7pbz}
+    volumes:
+      - ./brightdata_session_data:/app/brightdata_session_data
+      - ./failure_screenshots:/app/failure_screenshots
+      - ./voting_logs.csv:/app/backend/voting_logs.csv
+    restart: unless-stopped
+    networks:
+      - cloudvoter-network
+
+  nginx:
+    image: nginx:alpine
+    container_name: cloudvoter-nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./ssl:/etc/nginx/ssl:ro
+    depends_on:
+      - cloudvoter
+    restart: unless-stopped
+    networks:
+      - cloudvoter-network
+
+networks:
+  cloudvoter-network:
+    driver: bridge

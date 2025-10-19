@@ -1,0 +1,90 @@
+╔═══════════════════════════════════════════════════════════════╗
+║                                                               ║
+║         CloudVoter Local Testing - Quick Reference           ║
+║                                                               ║
+╚═══════════════════════════════════════════════════════════════╝
+
+┌───────────────────────────────────────────────────────────────┐
+│  STEP 1: COPY DATA (1 minute)                                 │
+└───────────────────────────────────────────────────────────────┘
+
+cd C:\Users\shubh\OneDrive\Desktop\cloudvoter
+copy_all_data.bat
+
+┌───────────────────────────────────────────────────────────────┐
+│  STEP 2: SETUP BACKEND (5 minutes)                            │
+└───────────────────────────────────────────────────────────────┘
+
+cd backend
+python -m venv venv
+venv\Scripts\activate
+pip install -r requirements-windows.txt
+playwright install chromium
+
+┌───────────────────────────────────────────────────────────────┐
+│  STEP 3: SETUP FRONTEND (3 minutes)                           │
+└───────────────────────────────────────────────────────────────┘
+
+cd frontend
+npm install
+
+┌───────────────────────────────────────────────────────────────┐
+│  STEP 4: START BACKEND (Terminal 1)                           │
+└───────────────────────────────────────────────────────────────┘
+
+cd backend
+venv\Scripts\activate
+python app.py
+
+Expected: Running on http://127.0.0.1:5000
+
+┌───────────────────────────────────────────────────────────────┐
+│  STEP 5: START FRONTEND (Terminal 2)                          │
+└───────────────────────────────────────────────────────────────┘
+
+cd frontend
+npm start
+
+Expected: Opens http://localhost:3000 in browser
+
+┌───────────────────────────────────────────────────────────────┐
+│  STEP 6: TEST IN BROWSER                                      │
+└───────────────────────────────────────────────────────────────┘
+
+1. Open http://localhost:3000
+2. Check configuration is pre-filled
+3. Click "Start Ultra Monitoring"
+4. Watch logs for activity
+5. Verify instances launch
+
+═══════════════════════════════════════════════════════════════
+
+QUICK VERIFICATION:
+
+✓ Backend: http://localhost:5000/api/health
+✓ Frontend: http://localhost:3000
+✓ Config loaded: Check logs for "Configuration loaded"
+✓ WebSocket: Green indicator in UI
+✓ Monitoring: Click button, watch logs
+
+═══════════════════════════════════════════════════════════════
+
+TROUBLESHOOTING:
+
+Port 5000 in use?
+  → netstat -ano | findstr :5000
+  → taskkill /PID <PID> /F
+
+Module not found?
+  → venv\Scripts\activate
+  → pip install -r requirements.txt
+
+Frontend won't start?
+  → npm install
+  → npm start
+
+═══════════════════════════════════════════════════════════════
+
+FULL GUIDE: See LOCAL_TESTING_GUIDE.md
+
+═══════════════════════════════════════════════════════════════

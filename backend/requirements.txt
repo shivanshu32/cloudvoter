@@ -1,0 +1,9 @@
+Flask==3.0.0
+Flask-CORS==4.0.0
+Flask-SocketIO==5.3.5
+python-socketio==5.10.0
+playwright==1.40.0
+python-dotenv==1.0.0
+# gunicorn is Linux-only, not needed for Windows local testing
+# eventlet requires compilation on Windows, using alternative
+gevent==24.2.1

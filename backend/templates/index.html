@@ -1,0 +1,832 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CloudVoter - Automated Voting System</title>
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        .pulse { animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
+        
+        .status-badge {
+            display: inline-flex;
+            align-items: center;
+            padding: 0.25rem 0.75rem;
+            border-radius: 9999px;
+            font-size: 0.875rem;
+            font-weight: 500;
+        }
+        
+        .log-entry {
+            padding: 0.5rem;
+            border-bottom: 1px solid #e5e7eb;
+            font-family: 'Courier New', monospace;
+            font-size: 0.875rem;
+        }
+        
+        .log-entry:hover {
+            background-color: #f9fafb;
+        }
+        
+        .tab-btn {
+            padding: 0.75rem 1.5rem;
+            font-weight: 500;
+            color: #6b7280;
+            border-bottom: 2px solid transparent;
+            transition: all 0.2s;
+        }
+        
+        .tab-btn:hover {
+            color: #111827;
+        }
+        
+        .tab-btn.active {
+            color: #2563eb;
+            border-bottom-color: #2563eb;
+        }
+        
+        .tab-content {
+            display: none;
+        }
+        
+        .tab-content.active {
+            display: block;
+        }
+        
+        .session-card {
+            background: white;
+            border: 1px solid #e5e7eb;
+            border-radius: 0.5rem;
+            padding: 1rem;
+            margin-bottom: 1rem;
+        }
+        
+        .session-card:hover {
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+        }
+    </style>
+</head>
+<body class="bg-gray-50">
+    <div class="min-h-screen">
+        <!-- Header -->
+        <header class="bg-white shadow-sm border-b border-gray-200">
+            <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
+                <div class="flex items-center justify-between">
+                    <div class="flex items-center space-x-3">
+                        <div class="w-10 h-10 bg-blue-600 rounded-lg flex items-center justify-center">
+                            <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
+                            </svg>
+                        </div>
+                        <div>
+                            <h1 class="text-2xl font-bold text-gray-900">CloudVoter</h1>
+                            <p class="text-sm text-gray-500">Automated Voting System</p>
+                        </div>
+                    </div>
+                    <div class="flex items-center space-x-4">
+                        <div id="connection-status" class="flex items-center space-x-2">
+                            <div class="w-2 h-2 bg-gray-400 rounded-full"></div>
+                            <span class="text-sm text-gray-600">Connecting...</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </header>
+
+        <!-- Main Content -->
+        <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+            <!-- Tab Navigation -->
+            <div class="bg-white rounded-lg shadow-sm border border-gray-200 mb-6">
+                <nav class="flex border-b border-gray-200">
+                    <button class="tab-btn active" onclick="switchTab('dashboard')">
+                        <span class="flex items-center space-x-2">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path>
+                            </svg>
+                            <span>Dashboard</span>
+                        </span>
+                    </button>
+                    <button class="tab-btn" onclick="switchTab('sessions')">
+                        <span class="flex items-center space-x-2">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path>
+                            </svg>
+                            <span>Sessions</span>
+                        </span>
+                    </button>
+                    <button class="tab-btn" onclick="switchTab('logs')">
+                        <span class="flex items-center space-x-2">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                            <span>Logs</span>
+                        </span>
+                    </button>
+                </nav>
+            </div>
+
+            <!-- Dashboard Tab -->
+            <div id="dashboard-tab" class="tab-content active">
+            <!-- Control Panel -->
+            <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-6">
+                <div class="flex items-center justify-between mb-6">
+                    <h2 class="text-xl font-semibold text-gray-900">Control Panel</h2>
+                    <button id="start-btn" class="px-6 py-2 bg-green-600 hover:bg-green-700 text-white font-medium rounded-lg transition-colors duration-200 flex items-center space-x-2">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"></path>
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                        </svg>
+                        <span>Start Monitoring</span>
+                    </button>
+                    <button id="stop-btn" class="px-6 py-2 bg-red-600 hover:bg-red-700 text-white font-medium rounded-lg transition-colors duration-200 hidden flex items-center space-x-2">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 10a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z"></path>
+                        </svg>
+                        <span>Stop Monitoring</span>
+                    </button>
+                </div>
+
+                <!-- Configuration -->
+                <div class="grid grid-cols-1 gap-4 mb-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-2">Voting URL</label>
+                        <input type="text" id="voting-url" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent" placeholder="https://www.cutebabyvote.com/...">
+                    </div>
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-2">BrightData Username</label>
+                            <input type="text" id="username" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent" placeholder="username">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-2">BrightData Password</label>
+                            <input type="password" id="password" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent" placeholder="password">
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Statistics -->
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+                <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <p class="text-sm font-medium text-gray-600">Total Attempts</p>
+                            <p id="stat-total" class="text-2xl font-bold text-gray-900 mt-1">0</p>
+                        </div>
+                        <div class="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center">
+                            <svg class="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path>
+                            </svg>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <p class="text-sm font-medium text-gray-600">Successful Votes</p>
+                            <p id="stat-success" class="text-2xl font-bold text-green-600 mt-1">0</p>
+                        </div>
+                        <div class="w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center">
+                            <svg class="w-6 h-6 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                            </svg>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <p class="text-sm font-medium text-gray-600">Failed Votes</p>
+                            <p id="stat-failed" class="text-2xl font-bold text-red-600 mt-1">0</p>
+                        </div>
+                        <div class="w-12 h-12 bg-red-100 rounded-lg flex items-center justify-center">
+                            <svg class="w-6 h-6 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                            </svg>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <p class="text-sm font-medium text-gray-600">Active Instances</p>
+                            <p id="stat-active" class="text-2xl font-bold text-purple-600 mt-1">0</p>
+                        </div>
+                        <div class="w-12 h-12 bg-purple-100 rounded-lg flex items-center justify-center">
+                            <svg class="w-6 h-6 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
+                            </svg>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Instances and Logs -->
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <!-- Active Instances -->
+                <div class="bg-white rounded-lg shadow-sm border border-gray-200">
+                    <div class="px-6 py-4 border-b border-gray-200">
+                        <h3 class="text-lg font-semibold text-gray-900">Active Instances</h3>
+                    </div>
+                    <div id="instances-container" class="p-4 max-h-96 overflow-y-auto">
+                        <p class="text-sm text-gray-500 text-center py-8">No active instances</p>
+                    </div>
+                </div>
+
+                <!-- Live Logs -->
+                <div class="bg-white rounded-lg shadow-sm border border-gray-200">
+                    <div class="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+                        <h3 class="text-lg font-semibold text-gray-900">Live Logs</h3>
+                        <button id="clear-logs" class="text-sm text-gray-600 hover:text-gray-900">Clear</button>
+                    </div>
+                    <div id="logs-container" class="max-h-96 overflow-y-auto">
+                        <p class="text-sm text-gray-500 text-center py-8">No logs yet</p>
+                    </div>
+                </div>
+            </div>
+            </div>
+            <!-- End Dashboard Tab -->
+
+            <!-- Sessions Tab -->
+            <div id="sessions-tab" class="tab-content">
+                <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-6">
+                    <div class="flex items-center justify-between mb-6">
+                        <h2 class="text-xl font-semibold text-gray-900">Saved Sessions</h2>
+                        <span id="sessions-count" class="text-sm text-gray-600">Loading...</span>
+                    </div>
+                    <div id="sessions-list" class="space-y-4">
+                        <p class="text-center text-gray-500 py-8">Loading sessions...</p>
+                    </div>
+                </div>
+            </div>
+            <!-- End Sessions Tab -->
+
+            <!-- Logs Tab -->
+            <div id="logs-tab" class="tab-content">
+                <div class="bg-white rounded-lg shadow-sm border border-gray-200">
+                    <div class="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+                        <h3 class="text-lg font-semibold text-gray-900">All Logs</h3>
+                        <button id="clear-all-logs" class="text-sm text-gray-600 hover:text-gray-900">Clear</button>
+                    </div>
+                    <div id="all-logs-container" class="max-h-screen overflow-y-auto p-4">
+                        <p class="text-sm text-gray-500 text-center py-8">No logs yet</p>
+                    </div>
+                </div>
+            </div>
+            <!-- End Logs Tab -->
+        </main>
+    </div>
+
+    <!-- Save Login Modal -->
+    <div id="save-login-modal" class="fixed inset-0 bg-black bg-opacity-50 hidden items-center justify-center z-50">
+        <div class="bg-white rounded-lg shadow-xl p-6 max-w-md w-full mx-4">
+            <h3 class="text-lg font-semibold text-gray-900 mb-4">Save Google Login</h3>
+            <p class="text-sm text-gray-600 mb-4">
+                A browser window will open. Please:
+            </p>
+            <ol class="list-decimal list-inside text-sm text-gray-600 space-y-2 mb-6">
+                <li>Log into your Google account</li>
+                <li>Complete any 2FA verification</li>
+                <li>Click "Done" below when finished</li>
+            </ol>
+            <div class="flex space-x-3">
+                <button id="cancel-login-btn" class="flex-1 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50">
+                    Cancel
+                </button>
+                <button id="complete-login-btn" class="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+                    Done - Save Session
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Configuration
+        const API_URL = window.location.origin;
+        let socket = null;
+        let monitoringActive = false;
+
+        // DOM Elements
+        const startBtn = document.getElementById('start-btn');
+        const stopBtn = document.getElementById('stop-btn');
+        const votingUrlInput = document.getElementById('voting-url');
+        const usernameInput = document.getElementById('username');
+        const passwordInput = document.getElementById('password');
+        const connectionStatus = document.getElementById('connection-status');
+        const logsContainer = document.getElementById('logs-container');
+        const instancesContainer = document.getElementById('instances-container');
+        const clearLogsBtn = document.getElementById('clear-logs');
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', () => {
+            initializeSocket();
+            loadConfiguration();
+            setupEventListeners();
+            checkMonitoringStatus();  // Check if monitoring is already running
+            startPolling();
+        });
+
+        // Socket.IO Connection
+        function initializeSocket() {
+            socket = io(API_URL);
+
+            socket.on('connect', () => {
+                updateConnectionStatus(true);
+                addLog('🔌 Connected to CloudVoter server');
+            });
+
+            socket.on('disconnect', () => {
+                updateConnectionStatus(false);
+                addLog('⚠️ Disconnected from server');
+            });
+
+            socket.on('log', (data) => {
+                addLog(data.message);
+            });
+
+            socket.on('log_update', (data) => {
+                addLog(data.message);
+            });
+
+            socket.on('status_update', (data) => {
+                monitoringActive = data.monitoring_active;
+                updateButtons();
+            });
+        }
+
+        // Update connection status
+        function updateConnectionStatus(connected) {
+            const statusDot = connectionStatus.querySelector('div');
+            const statusText = connectionStatus.querySelector('span');
+            
+            if (connected) {
+                statusDot.className = 'w-2 h-2 bg-green-500 rounded-full pulse';
+                statusText.textContent = 'Connected';
+                statusText.className = 'text-sm text-green-600';
+            } else {
+                statusDot.className = 'w-2 h-2 bg-red-500 rounded-full';
+                statusText.textContent = 'Disconnected';
+                statusText.className = 'text-sm text-red-600';
+            }
+        }
+
+        // Load configuration
+        async function loadConfiguration() {
+            try {
+                const response = await fetch(`${API_URL}/api/config`);
+                const data = await response.json();
+                
+                votingUrlInput.value = data.voting_url || '';
+                usernameInput.value = data.bright_data_username || '';
+                passwordInput.value = data.bright_data_password || '';
+                
+                addLog('✅ Configuration loaded from config.py');
+            } catch (error) {
+                console.error('Error loading config:', error);
+                addLog('⚠️ Could not load configuration');
+            }
+        }
+
+        // Setup event listeners
+        function setupEventListeners() {
+            startBtn.addEventListener('click', startMonitoring);
+            stopBtn.addEventListener('click', stopMonitoring);
+            clearLogsBtn.addEventListener('click', clearLogs);
+        }
+
+        // Start monitoring
+        async function startMonitoring() {
+            try {
+                // Get credentials from inputs
+                const username = usernameInput.value.trim();
+                const password = passwordInput.value.trim();
+                const votingUrl = votingUrlInput.value.trim();
+                
+                // Send credentials in request body
+                const response = await fetch(`${API_URL}/api/start-monitoring`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        username: username || undefined,
+                        password: password || undefined,
+                        voting_url: votingUrl || undefined
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.status === 'started') {
+                    monitoringActive = true;
+                    updateButtons();
+                    addLog('🚀 Ultra monitoring started');
+                } else {
+                    addLog('⚠️ ' + data.message);
+                }
+            } catch (error) {
+                console.error('Error starting monitoring:', error);
+                addLog('❌ Failed to start monitoring: ' + error.message);
+            }
+        }
+
+        // Stop monitoring
+        async function stopMonitoring() {
+            try {
+                const response = await fetch(`${API_URL}/api/stop-monitoring`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+                
+                const data = await response.json();
+                
+                if (data.status === 'stopped') {
+                    monitoringActive = false;
+                    updateButtons();
+                    addLog('⏹ Monitoring stopped');
+                } else {
+                    addLog('⚠️ ' + data.message);
+                }
+            } catch (error) {
+                console.error('Error stopping monitoring:', error);
+                addLog('❌ Failed to stop monitoring');
+            }
+        }
+
+        // Update buttons
+        function updateButtons() {
+            if (monitoringActive) {
+                startBtn.classList.add('hidden');
+                stopBtn.classList.remove('hidden');
+            } else {
+                startBtn.classList.remove('hidden');
+                stopBtn.classList.add('hidden');
+            }
+        }
+
+        // Add log entry
+        function addLog(message) {
+            const timestamp = new Date().toLocaleTimeString();
+            const logEntry = document.createElement('div');
+            logEntry.className = 'log-entry';
+            logEntry.textContent = `[${timestamp}] ${message}`;
+            
+            if (logsContainer.querySelector('p')) {
+                logsContainer.innerHTML = '';
+            }
+            
+            logsContainer.appendChild(logEntry);
+            logsContainer.scrollTop = logsContainer.scrollHeight;
+            
+            // Keep only last 100 logs
+            while (logsContainer.children.length > 100) {
+                logsContainer.removeChild(logsContainer.firstChild);
+            }
+        }
+
+        // Clear logs
+        function clearLogs() {
+            logsContainer.innerHTML = '<p class="text-sm text-gray-500 text-center py-8">No logs yet</p>';
+        }
+
+        // Update statistics
+        async function updateStatistics() {
+            try {
+                const response = await fetch(`${API_URL}/api/statistics`);
+                const data = await response.json();
+                
+                document.getElementById('stat-total').textContent = data.total_attempts || 0;
+                document.getElementById('stat-success').textContent = data.successful_votes || 0;
+                document.getElementById('stat-failed').textContent = data.failed_votes || 0;
+                document.getElementById('stat-active').textContent = data.active_instances || 0;
+            } catch (error) {
+                console.error('Error updating statistics:', error);
+            }
+        }
+
+        // Update instances
+        async function updateInstances() {
+            try {
+                const response = await fetch(`${API_URL}/api/instances`);
+                const data = await response.json();
+                
+                if (data.instances && data.instances.length > 0) {
+                    instancesContainer.innerHTML = data.instances.map(instance => `
+                        <div class="mb-3 p-3 bg-gray-50 rounded-lg border border-gray-200">
+                            <div class="flex items-center justify-between mb-2">
+                                <span class="font-medium text-gray-900">Instance #${instance.instance_id}</span>
+                                <span class="status-badge ${getStatusColor(instance.status)}">
+                                    ${instance.status}
+                                </span>
+                            </div>
+                            <div class="text-sm text-gray-600 space-y-1">
+                                <div>IP: ${instance.ip || 'N/A'}</div>
+                                <div>Votes: ${instance.vote_count || 0}</div>
+                            </div>
+                        </div>
+                    `).join('');
+                } else {
+                    instancesContainer.innerHTML = '<p class="text-sm text-gray-500 text-center py-8">No active instances</p>';
+                }
+            } catch (error) {
+                console.error('Error updating instances:', error);
+            }
+        }
+
+        // Get status color
+        function getStatusColor(status) {
+            if (status.includes('Success') || status.includes('✅')) return 'bg-green-100 text-green-800';
+            if (status.includes('Error') || status.includes('❌')) return 'bg-red-100 text-red-800';
+            if (status.includes('Cooldown') || status.includes('⏳')) return 'bg-blue-100 text-blue-800';
+            if (status.includes('Login') || status.includes('🔑')) return 'bg-yellow-100 text-yellow-800';
+            return 'bg-gray-100 text-gray-800';
+        }
+
+        // Check monitoring status on page load
+        async function checkMonitoringStatus() {
+            try {
+                const response = await fetch(`${API_URL}/api/status`);
+                const data = await response.json();
+                
+                if (data.monitoring_active) {
+                    monitoringActive = true;
+                    updateButtons();
+                    addLog('✅ Monitoring is already running');
+                } else {
+                    monitoringActive = false;
+                    updateButtons();
+                }
+            } catch (error) {
+                console.error('Error checking monitoring status:', error);
+            }
+        }
+
+        // Start polling
+        function startPolling() {
+            updateStatistics();
+            updateInstances();
+            
+            setInterval(updateStatistics, 5000);
+            setInterval(updateInstances, 5000);
+        }
+
+        // Tab switching
+        function switchTab(tabName) {
+            // Hide all tabs
+            document.querySelectorAll('.tab-content').forEach(tab => {
+                tab.classList.remove('active');
+            });
+            
+            // Remove active class from all buttons
+            document.querySelectorAll('.tab-btn').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            
+            // Show selected tab
+            document.getElementById(`${tabName}-tab`).classList.add('active');
+            
+            // Add active class to clicked button
+            event.target.closest('.tab-btn').classList.add('active');
+            
+            // Load sessions if sessions tab
+            if (tabName === 'sessions') {
+                loadSessions();
+            }
+        }
+
+        // Load sessions
+        async function loadSessions() {
+            try {
+                const response = await fetch(`${API_URL}/api/sessions`);
+                const data = await response.json();
+                
+                const sessionsList = document.getElementById('sessions-list');
+                const sessionsCount = document.getElementById('sessions-count');
+                
+                if (data.sessions && data.sessions.length > 0) {
+                    sessionsCount.textContent = `${data.sessions.length} sessions`;
+                    
+                    sessionsList.innerHTML = data.sessions.map(session => `
+                        <div class="session-card">
+                            <div class="flex items-center justify-between mb-3">
+                                <div>
+                                    <h3 class="text-lg font-semibold text-gray-900">Instance #${session.instance_id}</h3>
+                                    <p class="text-sm text-gray-600">IP: ${session.ip}</p>
+                                </div>
+                                <span class="status-badge ${getSessionStatusColor(session.status)}">
+                                    ${getSessionStatusText(session.status)}
+                                </span>
+                            </div>
+                            <div class="grid grid-cols-2 gap-2 text-sm text-gray-600 mb-3">
+                                <div>✅ Last Success: ${formatLastVote(session.last_successful_vote)}</div>
+                                <div>🎯 Last Attempt: ${formatLastVote(session.last_attempted_vote)}</div>
+                            </div>
+                            <div class="text-sm text-gray-600 mb-3">
+                                <div>📊 Total Votes: ${session.vote_count}</div>
+                            </div>
+                            <div class="flex space-x-2">
+                                <button onclick="launchInstance(${session.instance_id})" 
+                                    class="flex-1 px-3 py-2 bg-green-600 hover:bg-green-700 text-white text-sm rounded-lg transition-colors">
+                                    🚀 Launch
+                                </button>
+                                <button onclick="checkLogin(${session.instance_id})" 
+                                    class="flex-1 px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded-lg transition-colors">
+                                    🔍 Check Login
+                                </button>
+                                <button onclick="saveLogin(${session.instance_id})" 
+                                    class="flex-1 px-3 py-2 bg-purple-600 hover:bg-purple-700 text-white text-sm rounded-lg transition-colors">
+                                    💾 Save Login
+                                </button>
+                            </div>
+                        </div>
+                    `).join('');
+                } else {
+                    sessionsCount.textContent = '0 sessions';
+                    sessionsList.innerHTML = '<p class="text-center text-gray-500 py-8">No saved sessions found</p>';
+                }
+            } catch (error) {
+                console.error('Error loading sessions:', error);
+                addLog('❌ Failed to load sessions');
+            }
+        }
+
+        // Launch instance
+        async function launchInstance(instanceId) {
+            try {
+                addLog(`🚀 Launching instance #${instanceId}...`);
+                
+                const response = await fetch(`${API_URL}/api/launch-instance/${instanceId}`, {
+                    method: 'POST'
+                });
+                const data = await response.json();
+                
+                if (data.status === 'success') {
+                    addLog(`✅ ${data.message}`);
+                    alert(data.message);
+                } else {
+                    addLog(`⚠️ ${data.message}`);
+                    alert(data.message);
+                }
+            } catch (error) {
+                console.error('Error launching instance:', error);
+                addLog(`❌ Failed to launch instance #${instanceId}`);
+                alert('Failed to launch instance');
+            }
+        }
+
+        // Check login
+        let checkingLogin = {};
+        async function checkLogin(instanceId) {
+            if (checkingLogin[instanceId]) {
+                alert('Already checking login for this instance');
+                return;
+            }
+            
+            try {
+                checkingLogin[instanceId] = true;
+                addLog(`🔍 Checking login for instance #${instanceId}...`);
+                
+                const response = await fetch(`${API_URL}/api/check-login/${instanceId}`, {
+                    method: 'POST'
+                });
+                const data = await response.json();
+                
+                if (data.status === 'success') {
+                    if (data.logged_in) {
+                        addLog(`✅ Instance #${instanceId}: ${data.message}`);
+                        alert(`✅ Instance #${instanceId} is logged in!`);
+                    } else {
+                        addLog(`⚠️ Instance #${instanceId}: ${data.message}`);
+                        alert(`⚠️ Instance #${instanceId} requires re-login`);
+                    }
+                    loadSessions(); // Refresh sessions list
+                } else {
+                    addLog(`❌ ${data.message}`);
+                    alert(data.message);
+                }
+            } catch (error) {
+                console.error('Error checking login:', error);
+                addLog(`❌ Failed to check login for instance #${instanceId}`);
+                alert('Failed to check login');
+            } finally {
+                checkingLogin[instanceId] = false;
+            }
+        }
+
+        // Save login
+        let currentLoginInstance = null;
+        async function saveLogin(instanceId) {
+            try {
+                currentLoginInstance = instanceId;
+                addLog(`💾 Opening browser for instance #${instanceId}...`);
+                
+                const response = await fetch(`${API_URL}/api/save-login/${instanceId}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({})
+                });
+                const data = await response.json();
+                
+                if (data.status === 'browser_opened') {
+                    addLog(`✅ Browser opened for instance #${instanceId} - Please complete Google login`);
+                    showSaveLoginModal();
+                } else {
+                    addLog(`❌ ${data.message}`);
+                    alert(data.message);
+                }
+            } catch (error) {
+                console.error('Error opening login browser:', error);
+                addLog(`❌ Failed to open browser for instance #${instanceId}`);
+                alert('Failed to open browser');
+            }
+        }
+
+        // Show save login modal
+        function showSaveLoginModal() {
+            const modal = document.getElementById('save-login-modal');
+            modal.classList.remove('hidden');
+            modal.classList.add('flex');
+        }
+
+        // Hide save login modal
+        function hideSaveLoginModal() {
+            const modal = document.getElementById('save-login-modal');
+            modal.classList.add('hidden');
+            modal.classList.remove('flex');
+        }
+
+        // Complete login
+        async function completeLogin() {
+            if (!currentLoginInstance) {
+                alert('No active login session');
+                return;
+            }
+            
+            try {
+                addLog(`💾 Saving session for instance #${currentLoginInstance}...`);
+                
+                const response = await fetch(`${API_URL}/api/save-login/${currentLoginInstance}/complete`, {
+                    method: 'POST'
+                });
+                const data = await response.json();
+                
+                if (data.status === 'success') {
+                    addLog(`✅ ${data.message}`);
+                    alert(data.message);
+                    hideSaveLoginModal();
+                    loadSessions(); // Refresh sessions list
+                    currentLoginInstance = null;
+                } else {
+                    addLog(`❌ ${data.message}`);
+                    alert(data.message);
+                }
+            } catch (error) {
+                console.error('Error completing login:', error);
+                addLog(`❌ Failed to save session`);
+                alert('Failed to save session');
+            }
+        }
+
+        // Helper functions
+        function getSessionStatusColor(status) {
+            if (status === 'saved') return 'bg-green-100 text-green-800';
+            if (status === 'needs_login') return 'bg-yellow-100 text-yellow-800';
+            return 'bg-gray-100 text-gray-800';
+        }
+
+        function getSessionStatusText(status) {
+            if (status === 'saved') return '✅ Saved';
+            if (status === 'needs_login') return '⚠️ Needs Login';
+            return '❓ Unknown';
+        }
+
+        function formatLastVote(lastVote) {
+            if (!lastVote || lastVote === 'Never') return 'Never';
+            try {
+                const date = new Date(lastVote);
+                const now = new Date();
+                const diffMs = now - date;
+                const diffMins = Math.floor(diffMs / 60000);
+                const diffHours = Math.floor(diffMins / 60);
+                
+                if (diffMins < 60) return `${diffMins} min ago`;
+                if (diffHours < 24) return `${diffHours} hours ago`;
+                return `${Math.floor(diffHours / 24)} days ago`;
+            } catch {
+                return lastVote;
+            }
+        }
+
+        // Modal event listeners
+        document.getElementById('cancel-login-btn').addEventListener('click', hideSaveLoginModal);
+        document.getElementById('complete-login-btn').addEventListener('click', completeLogin);
+    </script>
+</body>
+</html>
