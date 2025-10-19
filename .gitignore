@@ -43,13 +43,8 @@ frontend/build/
 
 # Logs
 *.log
-cloudvoter.log
-gui_control_panel.log
-brightdata_voting_automation.log
-voting_logs.csv
 
 # Session Data
-brightdata_session_data/
 failure_screenshots/
 
 # IDE
