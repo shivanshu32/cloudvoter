@@ -10,7 +10,7 @@ import os
 import random
 import string
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, Set, Optional
 from playwright.async_api import async_playwright
 from vote_logger import VoteLogger
@@ -350,7 +350,11 @@ class VoterInstance:
                 last_vote_time_str = session_info.get('last_vote_time')
                 if last_vote_time_str:
                     last_vote_time = datetime.fromisoformat(last_vote_time_str)
-                    time_since_vote = (datetime.now() - last_vote_time).total_seconds() / 60
+                    # Make timezone-aware if naive
+                    if last_vote_time.tzinfo is None:
+                        last_vote_time = last_vote_time.replace(tzinfo=timezone.utc)
+                    current_time = datetime.now(timezone.utc)
+                    time_since_vote = (current_time - last_vote_time).total_seconds() / 60
                     
                     if time_since_vote < 31:  # 31 minute cooldown
                         remaining_minutes = int(31 - time_since_vote)
@@ -534,7 +538,7 @@ class VoterInstance:
     async def attempt_vote(self):
         """Attempt to cast a vote with vote count verification"""
         # Initialize variables at the start so they're available in exception handler
-        click_time = datetime.now()
+        click_time = datetime.now(timezone.utc)
         initial_count = None
         click_attempts = 0
         button_clicked = False
@@ -562,7 +566,7 @@ class VoterInstance:
             
             # STEP 3: Find and click vote button
             # Record exact click time
-            click_time = datetime.now()
+            click_time = datetime.now(timezone.utc)
             vote_selectors = [
                 # Most specific selectors first (exact match for cutebabyvote.com)
                 'div.pc-image-info-box-button-btn-text.blink',
@@ -619,7 +623,7 @@ class VoterInstance:
                 if count_increase == 1:
                     # VERIFIED SUCCESS - Count increased by exactly 1
                     logger.info(f"[SUCCESS] ✅ Vote VERIFIED successful: {initial_count} -> {final_count} (+{count_increase})")
-                    self.last_vote_time = datetime.now()
+                    self.last_vote_time = datetime.now(timezone.utc)
                     self.vote_count += 1
                     
                     # Log successful vote to CSV with comprehensive data
@@ -736,7 +740,7 @@ class VoterInstance:
                 
                 if any(pattern in page_content.lower() for pattern in ['thank you', 'success', 'counted']):
                     logger.warning(f"[VOTE] Text detection shows success (UNVERIFIED)")
-                    self.last_vote_time = datetime.now()
+                    self.last_vote_time = datetime.now(timezone.utc)
                     self.vote_count += 1
                     
                     # Log with warning that it's unverified
@@ -813,7 +817,7 @@ class VoterInstance:
             self.vote_logger.log_vote_attempt(
                 instance_id=self.instance_id,
                 instance_name=f"Instance_{self.instance_id}",
-                time_of_click=click_time if 'click_time' in locals() else datetime.now(),
+                time_of_click=click_time if 'click_time' in locals() else datetime.now(timezone.utc),
                 status="failed",
                 voting_url=self.target_url,
                 cooldown_message="",
@@ -851,7 +855,7 @@ class VoterInstance:
                 'session_id': self.session_id,
                 'last_vote_time': self.last_vote_time.isoformat() if self.last_vote_time else None,
                 'vote_count': self.vote_count,
-                'saved_at': datetime.now().isoformat()
+                'saved_at': datetime.now(timezone.utc).isoformat()
             }
             
             session_info_path = os.path.join(self.session_dir, 'session_info.json')
@@ -1246,8 +1250,7 @@ class MultiInstanceVoter:
             self.global_hourly_limit = True
             
             # Calculate reactivation time (next hour)
-            from datetime import datetime, timedelta
-            next_hour = (datetime.now() + timedelta(hours=1)).replace(minute=0, second=0, microsecond=0)
+            next_hour = (datetime.now(timezone.utc) + timedelta(hours=1)).replace(minute=0, second=0, microsecond=0)
             self.global_reactivation_time = next_hour.isoformat()
             
             logger.info(f"[HOURLY_LIMIT] Will resume at {next_hour.strftime('%I:%M %p')}")
@@ -1277,11 +1280,12 @@ class MultiInstanceVoter:
         """Monitor and resume instances when hourly limit expires"""
         try:
             while self.global_hourly_limit:
-                from datetime import datetime
-                
                 if self.global_reactivation_time:
                     reactivation_dt = datetime.fromisoformat(self.global_reactivation_time)
-                    current_time = datetime.now()
+                    # Make timezone-aware if naive
+                    if reactivation_dt.tzinfo is None:
+                        reactivation_dt = reactivation_dt.replace(tzinfo=timezone.utc)
+                    current_time = datetime.now(timezone.utc)
                     
                     if current_time >= reactivation_dt:
                         logger.info(f"[HOURLY_LIMIT] ✅ Hourly limit expired - Resuming instances")

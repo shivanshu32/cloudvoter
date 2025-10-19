@@ -328,6 +328,7 @@
 
         // Initialize
         document.addEventListener('DOMContentLoaded', () => {
+            restoreLogs();  // Restore logs from localStorage
             initializeSocket();
             loadConfiguration();
             setupEventListeners();
@@ -360,6 +361,14 @@
             socket.on('status_update', (data) => {
                 monitoringActive = data.monitoring_active;
                 updateButtons();
+            });
+            
+            socket.on('statistics_update', (data) => {
+                // Update statistics in real-time via Socket.IO
+                document.getElementById('stat-total').textContent = data.total_attempts || 0;
+                document.getElementById('stat-success').textContent = data.successful_votes || 0;
+                document.getElementById('stat-failed').textContent = data.failed_votes || 0;
+                document.getElementById('stat-active').textContent = data.active_instances || 0;
             });
         }
 
@@ -489,11 +498,50 @@
             while (logsContainer.children.length > 100) {
                 logsContainer.removeChild(logsContainer.firstChild);
             }
+            
+            // Save logs to localStorage
+            saveLogs();
+        }
+        
+        // Save logs to localStorage
+        function saveLogs() {
+            try {
+                const logs = [];
+                logsContainer.querySelectorAll('.log-entry').forEach(entry => {
+                    logs.push(entry.textContent);
+                });
+                localStorage.setItem('cloudvoter_logs', JSON.stringify(logs));
+            } catch (error) {
+                console.error('Error saving logs:', error);
+            }
+        }
+        
+        // Restore logs from localStorage
+        function restoreLogs() {
+            try {
+                const savedLogs = localStorage.getItem('cloudvoter_logs');
+                if (savedLogs) {
+                    const logs = JSON.parse(savedLogs);
+                    if (logs.length > 0) {
+                        logsContainer.innerHTML = '';
+                        logs.forEach(logText => {
+                            const logEntry = document.createElement('div');
+                            logEntry.className = 'log-entry';
+                            logEntry.textContent = logText;
+                            logsContainer.appendChild(logEntry);
+                        });
+                        logsContainer.scrollTop = logsContainer.scrollHeight;
+                    }
+                }
+            } catch (error) {
+                console.error('Error restoring logs:', error);
+            }
         }
 
         // Clear logs
         function clearLogs() {
             logsContainer.innerHTML = '<p class="text-sm text-gray-500 text-center py-8">No logs yet</p>';
+            localStorage.removeItem('cloudvoter_logs');
         }
 
         // Update statistics

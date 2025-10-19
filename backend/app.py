@@ -6,7 +6,7 @@ import asyncio
 import json
 import logging
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from flask import Flask, request, jsonify, render_template
 from flask_cors import CORS
 from flask_socketio import SocketIO, emit
@@ -177,6 +177,14 @@ def start_monitoring():
                         'loop_count': loop_count,
                         'active_instances': len(voter_system.active_instances) if voter_system else 0
                     })
+                    
+                    # Emit statistics update
+                    try:
+                        stats = vote_logger.get_statistics()
+                        stats['active_instances'] = len(voter_system.active_instances) if voter_system else 0
+                        socketio.emit('statistics_update', stats)
+                    except Exception as e:
+                        logger.error(f"Error emitting statistics: {e}")
                     
                     # Check for ready instances
                     try:
@@ -389,8 +397,16 @@ def get_vote_history():
 @app.route('/api/statistics', methods=['GET'])
 def get_statistics():
     """Get voting statistics"""
+    global voter_system
     try:
         stats = vote_logger.get_statistics()
+        
+        # Get real-time active instances count from voter_system
+        if voter_system and hasattr(voter_system, 'active_instances'):
+            stats['active_instances'] = len(voter_system.active_instances)
+        else:
+            stats['active_instances'] = 0
+        
         return jsonify(stats)
     except Exception as e:
         logger.error(f"❌ Error getting statistics: {e}")
@@ -874,6 +890,9 @@ async def check_ready_instances():
                             
                             if instance_id and time_of_click_str and status == 'success':
                                 vote_time = datetime.fromisoformat(time_of_click_str)
+                                # Make timezone-aware if naive (assume UTC)
+                                if vote_time.tzinfo is None:
+                                    vote_time = vote_time.replace(tzinfo=timezone.utc)
                                 # Keep only the most recent vote time for each instance
                                 if instance_id not in instance_last_vote or vote_time > instance_last_vote[instance_id]:
                                     instance_last_vote[instance_id] = vote_time
@@ -883,7 +902,7 @@ async def check_ready_instances():
                 logger.error(f"❌ Error reading voting logs: {e}")
         
         # Check each session for cooldown status
-        current_time = datetime.now()
+        current_time = datetime.now(timezone.utc)
         ready_count = 0
         cooldown_count = 0
         
