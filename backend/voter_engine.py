@@ -10,7 +10,7 @@ import os
 import random
 import string
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from typing import Dict, Set, Optional
 from playwright.async_api import async_playwright
 from vote_logger import VoteLogger
