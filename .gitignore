@@ -41,8 +41,6 @@ frontend/build/
 .env.test.local
 .env.production.local
 
-# User Configuration (contains credentials)
-user_config.json
 
 # Logs
 *.log
