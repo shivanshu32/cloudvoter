@@ -739,8 +739,12 @@ class VoterInstance:
                     return False
                     
                 else:
-                    # Count didn't increase - check for hourly limit message
+                    # Count didn't increase - wait for page to fully load and check for error messages
                     logger.info(f"[FAILED] Vote count did not increase: {initial_count} -> {final_count}")
+                    logger.info(f"[WAIT] Waiting for page to fully load and display error message...")
+                    
+                    # Wait additional time for error message to appear (page might still be loading)
+                    await asyncio.sleep(5)
                     
                     page_content = await self.page.content()
                     cooldown_message = ""
@@ -845,11 +849,37 @@ class VoterInstance:
                         else:
                             logger.info(f"[INSTANCE_COOLDOWN] Instance #{self.instance_id} will wait individually, other instances continue")
                     else:
-                        logger.error(f"[FAILED] Vote failed - count unchanged and no error message")
+                        # No error message found - try to extract any visible text from button/page
+                        logger.error(f"[FAILED] Vote failed - count unchanged and no known error pattern detected")
+                        logger.info(f"[DIAGNOSTIC] Attempting to extract page status message...")
+                        
+                        # Try to extract any message from the page for diagnostics
+                        diagnostic_message = "Vote count unchanged, no error message found"
+                        try:
+                            # Check button text
+                            button_selectors = [
+                                '.pc-image-info-box-button-btn-text',
+                                '.pc-hiddenbutton',
+                                'div.pc-image-info-box-button-btn',
+                                '.blink'
+                            ]
+                            for selector in button_selectors:
+                                try:
+                                    element = await self.page.query_selector(selector)
+                                    if element:
+                                        text = await element.inner_text()
+                                        if text and text.strip():
+                                            diagnostic_message = f"Button text: {text.strip()[:100]}"
+                                            logger.info(f"[DIAGNOSTIC] Found button text: {text.strip()[:100]}")
+                                            break
+                                except:
+                                    continue
+                        except Exception as e:
+                            logger.debug(f"[DIAGNOSTIC] Could not extract diagnostic info: {e}")
                         
                         # Track last attempt (failed) and store reason
                         self.last_attempted_vote = datetime.now()
-                        self.last_failure_reason = "Vote count did not increase"
+                        self.last_failure_reason = diagnostic_message
                         self.last_failure_type = "technical"  # Technical failure
                         
                         # Log failed vote with comprehensive data
@@ -861,13 +891,13 @@ class VoterInstance:
                             voting_url=self.target_url,
                             cooldown_message="",
                             failure_type="technical",
-                            failure_reason="Vote count did not increase",
+                            failure_reason=diagnostic_message,
                             initial_vote_count=initial_count,
                             final_vote_count=final_count,
                             proxy_ip=self.proxy_ip,
                             session_id=self.session_id or "",
                             click_attempts=click_attempts,
-                            error_message="",
+                            error_message="Count unchanged after 8 seconds wait",
                             browser_closed=True
                         )
                         
@@ -1483,7 +1513,8 @@ class MultiInstanceVoter:
                 with open(session_info_path, 'r') as f:
                     session_info = json.load(f)
             
-            proxy_ip = session_info.get('proxy_ip', f'session_{instance_id}')
+            saved_proxy_ip = session_info.get('proxy_ip')
+            saved_session_id = session_info.get('session_id')
             
             # Check if instance is already running by instance ID
             for ip, existing_instance in self.active_instances.items():
@@ -1491,18 +1522,27 @@ class MultiInstanceVoter:
                     logger.warning(f"[SESSION] Instance #{instance_id} already running with IP {ip}")
                     return None
             
-            # Get unique IP from Bright Data
-            excluded_ips = set(self.active_instances.keys()) | self.used_ips
-            ip_result = await self.get_proxy_ip(excluded_ips)
+            # CRITICAL: Reuse saved proxy IP instead of requesting new one
+            # This prevents 502 errors and maintains session consistency
+            if saved_proxy_ip and saved_session_id:
+                logger.info(f"[SESSION] Reusing saved proxy IP: {saved_proxy_ip} (session: {saved_session_id})")
+                new_proxy_ip = saved_proxy_ip
+                session_id = saved_session_id
+                proxy_port = self.proxy_api.proxy_port
+            else:
+                # Fallback: Only request new IP if session doesn't have one saved
+                logger.warning(f"[SESSION] No saved IP found, requesting new IP for instance #{instance_id}")
+                excluded_ips = set(self.active_instances.keys()) | self.used_ips
+                ip_result = await self.get_proxy_ip(excluded_ips)
+                
+                if not ip_result:
+                    logger.error(f"[SESSION] Could not get unique IP for instance #{instance_id}")
+                    return None
+                
+                new_proxy_ip, proxy_port = ip_result
+                session_id = ''.join(random.choices(string.ascii_lowercase + string.digits, k=10))
             
-            if not ip_result:
-                logger.error(f"[SESSION] Could not get unique IP for instance #{instance_id}")
-                return None
-            
-            new_proxy_ip, proxy_port = ip_result
-            
-            # Create session-specific proxy config
-            session_id = ''.join(random.choices(string.ascii_lowercase + string.digits, k=10))
+            # Create session-specific proxy config (using saved or new session_id)
             instance_proxy_config = {
                 'server': self.proxy_config['server'],
                 'host': self.proxy_config['host'],
