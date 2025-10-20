@@ -384,6 +384,199 @@ def stop_monitoring():
             'message': str(e)
         }), 500
 
+@app.route('/api/restart', methods=['POST'])
+def restart_system():
+    """Restart the system - close all browsers and restart monitoring"""
+    global voter_system, monitoring_active, monitoring_task
+    
+    try:
+        logger.info("🔄 Restarting system...")
+        
+        # Step 1: Stop monitoring
+        monitoring_active = False
+        if monitoring_task:
+            monitoring_task.cancel()
+        
+        logger.info("⏹ Monitoring stopped")
+        
+        # Step 2: Close all browsers
+        async def close_all_browsers():
+            if voter_system and hasattr(voter_system, 'active_instances'):
+                logger.info(f"🔒 Closing {len(voter_system.active_instances)} browser(s)...")
+                tasks = []
+                for ip, instance in voter_system.active_instances.items():
+                    if instance.browser or instance.page:
+                        tasks.append(instance.close_browser())
+                
+                if tasks:
+                    await asyncio.gather(*tasks, return_exceptions=True)
+                    logger.info("✅ All browsers closed")
+        
+        # Execute browser closing
+        future = asyncio.run_coroutine_threadsafe(close_all_browsers(), event_loop)
+        future.result(timeout=30)
+        
+        # Step 3: Wait a bit for cleanup
+        time.sleep(2)
+        
+        # Step 4: Restart monitoring
+        logger.info("🚀 Restarting monitoring...")
+        
+        # Load saved config
+        config_file = os.path.join(project_root, 'user_config.json')
+        saved_config = {}
+        if os.path.exists(config_file):
+            try:
+                with open(config_file, 'r') as f:
+                    saved_config = json.load(f)
+            except Exception as e:
+                logger.error(f"Error loading config file: {e}")
+        
+        # Get credentials
+        username = saved_config.get('bright_data_username') or \
+                   os.environ.get('BRIGHT_DATA_USERNAME', BRIGHT_DATA_USERNAME)
+        password = saved_config.get('bright_data_password') or \
+                   os.environ.get('BRIGHT_DATA_PASSWORD', BRIGHT_DATA_PASSWORD)
+        voting_url = saved_config.get('voting_url') or TARGET_URL
+        
+        if not username or not password:
+            return jsonify({
+                'status': 'error',
+                'message': 'Bright Data credentials required'
+            }), 400
+        
+        # Reinitialize voter system
+        voter_system = MultiInstanceVoter(
+            username=username,
+            password=password,
+            target_url=voting_url
+        )
+        logger.info("✅ Voter system reinitialized")
+        
+        # Start monitoring
+        monitoring_active = True
+        
+        async def monitoring_loop():
+            """Main monitoring loop"""
+            try:
+                logger.info("🚀 Starting ultra monitoring loop...")
+                
+                # Start browser monitoring service
+                if hasattr(voter_system, 'start_browser_monitoring_service'):
+                    await voter_system.start_browser_monitoring_service()
+                
+                # Start auto-unpause monitoring service
+                if hasattr(voter_system, 'start_auto_unpause_monitoring'):
+                    await voter_system.start_auto_unpause_monitoring()
+                
+                loop_count = 0
+                last_scan_time = 0
+                while monitoring_active:
+                    loop_count += 1
+                    
+                    # Emit status update
+                    socketio.emit('status_update', {
+                        'monitoring_active': True,
+                        'loop_count': loop_count,
+                        'active_instances': len(voter_system.active_instances) if voter_system else 0
+                    })
+                    
+                    # Emit statistics update
+                    try:
+                        stats = vote_logger.get_statistics()
+                        stats['active_instances'] = len(voter_system.active_instances) if voter_system else 0
+                        socketio.emit('statistics_update', stats)
+                    except Exception as e:
+                        logger.error(f"Error emitting statistics: {e}")
+                    
+                    # Emit instance updates
+                    try:
+                        if voter_system:
+                            instances = []
+                            for ip, instance in voter_system.active_instances.items():
+                                time_info = instance.get_time_until_next_vote()
+                                instances.append({
+                                    'instance_id': getattr(instance, 'instance_id', None),
+                                    'ip': ip,
+                                    'status': getattr(instance, 'status', 'Unknown'),
+                                    'is_paused': getattr(instance, 'is_paused', False),
+                                    'waiting_for_login': getattr(instance, 'waiting_for_login', False),
+                                    'vote_count': getattr(instance, 'vote_count', 0),
+                                    'seconds_remaining': time_info['seconds_remaining'],
+                                    'next_vote_time': time_info['next_vote_time'],
+                                    'last_vote_time': getattr(instance, 'last_vote_time', None).isoformat() if getattr(instance, 'last_vote_time', None) else None,
+                                    'last_successful_vote': getattr(instance, 'last_successful_vote', None).isoformat() if getattr(instance, 'last_successful_vote', None) else None,
+                                    'last_attempted_vote': getattr(instance, 'last_attempted_vote', None).isoformat() if getattr(instance, 'last_attempted_vote', None) else None,
+                                    'last_failure_reason': getattr(instance, 'last_failure_reason', None),
+                                    'last_failure_type': getattr(instance, 'last_failure_type', None)
+                                })
+                            socketio.emit('instances_update', {'instances': instances})
+                    except Exception as e:
+                        logger.error(f"Error emitting instances update: {e}")
+                    
+                    # Check for ready instances
+                    current_time = time.time()
+                    if current_time - last_scan_time >= SESSION_SCAN_INTERVAL:
+                        last_scan_time = current_time
+                        
+                        try:
+                            if voter_system and voter_system.global_hourly_limit:
+                                logger.debug(f"⏰ Global hourly limit active - skipping instance launch")
+                            else:
+                                ready_instances = await check_ready_instances()
+                                
+                                if ready_instances:
+                                    logger.info(f"🔍 Found {len(ready_instances)} ready instances")
+                                    
+                                    launched = False
+                                    for instance_info in ready_instances:
+                                        success = await launch_instance_from_session(instance_info)
+                                        if success:
+                                            launched = True
+                                            break
+                                    
+                                    if launched:
+                                        await asyncio.sleep(5)
+                            
+                        except Exception as e:
+                            logger.error(f"❌ Error in monitoring loop: {e}")
+                    
+                    await asyncio.sleep(10)
+                
+                logger.info("⏹ Monitoring loop stopped")
+                
+            except Exception as e:
+                logger.error(f"❌ Critical error in monitoring loop: {e}")
+                logger.error(traceback.format_exc())
+            finally:
+                if voter_system and hasattr(voter_system, 'stop_browser_monitoring_service'):
+                    await voter_system.stop_browser_monitoring_service()
+                
+                if voter_system and hasattr(voter_system, 'stop_auto_unpause_monitoring'):
+                    await voter_system.stop_auto_unpause_monitoring()
+        
+        # Schedule monitoring task
+        monitoring_task = asyncio.run_coroutine_threadsafe(monitoring_loop(), event_loop)
+        
+        logger.info("✅ System restarted successfully")
+        
+        socketio.emit('status_update', {
+            'monitoring_active': True
+        })
+        
+        return jsonify({
+            'status': 'success',
+            'message': 'System restarted successfully'
+        })
+        
+    except Exception as e:
+        logger.error(f"❌ Error restarting system: {e}")
+        logger.error(traceback.format_exc())
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        }), 500
+
 @app.route('/api/status', methods=['GET'])
 def get_status():
     """Get system status"""
@@ -638,9 +831,13 @@ def get_browsers():
                 # Check if browser is open
                 browser_active = instance.browser is not None and instance.page is not None
                 
+                # ONLY include instances with actively open browsers
+                if not browser_active:
+                    continue
+                
                 # Calculate browser open duration
                 browser_open_duration = "0s"
-                if browser_active and hasattr(instance, 'browser_start_time'):
+                if hasattr(instance, 'browser_start_time') and instance.browser_start_time:
                     duration_seconds = int((datetime.now() - instance.browser_start_time).total_seconds())
                     if duration_seconds < 60:
                         browser_open_duration = f"{duration_seconds}s"
@@ -651,7 +848,12 @@ def get_browsers():
                         minutes = (duration_seconds % 3600) // 60
                         browser_open_duration = f"{hours}h {minutes}m"
                 
+                # Create unique browser identifier
+                browser_session_id = getattr(instance, 'browser_session_id', None) or f"inst_{instance.instance_id}"
+                
                 browsers.append({
+                    'browser_id': f"{instance.instance_id}_{browser_session_id}",  # Unique ID for this browser
+                    'browser_session_id': browser_session_id,  # Session ID
                     'instance_id': instance.instance_id,
                     'ip': instance.proxy_ip or 'N/A',
                     'status': instance.status,
@@ -1309,9 +1511,165 @@ async def launch_instance_from_session(instance_info):
         logger.error(traceback.format_exc())
         return False
 
+def auto_start_monitoring():
+    """Auto-start monitoring on server startup"""
+    global voter_system, monitoring_active, monitoring_task
+    
+    try:
+        # Wait a bit for server to fully initialize
+        time.sleep(2)
+        
+        logger.info("🚀 Auto-starting monitoring...")
+        
+        # Load saved config
+        config_file = os.path.join(project_root, 'user_config.json')
+        saved_config = {}
+        if os.path.exists(config_file):
+            try:
+                with open(config_file, 'r') as f:
+                    saved_config = json.load(f)
+            except Exception as e:
+                logger.error(f"Error loading config file: {e}")
+        
+        # Get credentials
+        username = saved_config.get('bright_data_username') or \
+                   os.environ.get('BRIGHT_DATA_USERNAME', BRIGHT_DATA_USERNAME)
+        password = saved_config.get('bright_data_password') or \
+                   os.environ.get('BRIGHT_DATA_PASSWORD', BRIGHT_DATA_PASSWORD)
+        voting_url = saved_config.get('voting_url') or TARGET_URL
+        
+        if not username or not password:
+            logger.error("❌ Cannot auto-start: Bright Data credentials not configured")
+            return
+        
+        # Initialize voter system
+        if not voter_system:
+            voter_system = MultiInstanceVoter(
+                username=username,
+                password=password,
+                target_url=voting_url
+            )
+            logger.info("✅ Voter system initialized")
+        
+        # Start monitoring
+        monitoring_active = True
+        
+        async def monitoring_loop():
+            """Main monitoring loop"""
+            try:
+                logger.info("🚀 Starting ultra monitoring loop...")
+                
+                # Start browser monitoring service
+                if hasattr(voter_system, 'start_browser_monitoring_service'):
+                    await voter_system.start_browser_monitoring_service()
+                
+                # Start auto-unpause monitoring service
+                if hasattr(voter_system, 'start_auto_unpause_monitoring'):
+                    await voter_system.start_auto_unpause_monitoring()
+                
+                loop_count = 0
+                last_scan_time = 0
+                while monitoring_active:
+                    loop_count += 1
+                    
+                    # Emit status update
+                    socketio.emit('status_update', {
+                        'monitoring_active': True,
+                        'loop_count': loop_count,
+                        'active_instances': len(voter_system.active_instances) if voter_system else 0
+                    })
+                    
+                    # Emit statistics update
+                    try:
+                        stats = vote_logger.get_statistics()
+                        stats['active_instances'] = len(voter_system.active_instances) if voter_system else 0
+                        socketio.emit('statistics_update', stats)
+                    except Exception as e:
+                        logger.error(f"Error emitting statistics: {e}")
+                    
+                    # Emit instance updates
+                    try:
+                        if voter_system:
+                            instances = []
+                            for ip, instance in voter_system.active_instances.items():
+                                time_info = instance.get_time_until_next_vote()
+                                instances.append({
+                                    'instance_id': getattr(instance, 'instance_id', None),
+                                    'ip': ip,
+                                    'status': getattr(instance, 'status', 'Unknown'),
+                                    'is_paused': getattr(instance, 'is_paused', False),
+                                    'waiting_for_login': getattr(instance, 'waiting_for_login', False),
+                                    'vote_count': getattr(instance, 'vote_count', 0),
+                                    'seconds_remaining': time_info['seconds_remaining'],
+                                    'next_vote_time': time_info['next_vote_time'],
+                                    'last_vote_time': getattr(instance, 'last_vote_time', None).isoformat() if getattr(instance, 'last_vote_time', None) else None,
+                                    'last_successful_vote': getattr(instance, 'last_successful_vote', None).isoformat() if getattr(instance, 'last_successful_vote', None) else None,
+                                    'last_attempted_vote': getattr(instance, 'last_attempted_vote', None).isoformat() if getattr(instance, 'last_attempted_vote', None) else None,
+                                    'last_failure_reason': getattr(instance, 'last_failure_reason', None),
+                                    'last_failure_type': getattr(instance, 'last_failure_type', None)
+                                })
+                            socketio.emit('instances_update', {'instances': instances})
+                    except Exception as e:
+                        logger.error(f"Error emitting instances update: {e}")
+                    
+                    # Check for ready instances
+                    current_time = time.time()
+                    if current_time - last_scan_time >= SESSION_SCAN_INTERVAL:
+                        last_scan_time = current_time
+                        
+                        try:
+                            if voter_system and voter_system.global_hourly_limit:
+                                logger.debug(f"⏰ Global hourly limit active - skipping instance launch")
+                            else:
+                                ready_instances = await check_ready_instances()
+                                
+                                if ready_instances:
+                                    logger.info(f"🔍 Found {len(ready_instances)} ready instances")
+                                    
+                                    launched = False
+                                    for instance_info in ready_instances:
+                                        success = await launch_instance_from_session(instance_info)
+                                        if success:
+                                            launched = True
+                                            break
+                                    
+                                    if launched:
+                                        await asyncio.sleep(5)
+                            
+                        except Exception as e:
+                            logger.error(f"❌ Error in monitoring loop: {e}")
+                    
+                    await asyncio.sleep(10)
+                
+                logger.info("⏹ Monitoring loop stopped")
+                
+            except Exception as e:
+                logger.error(f"❌ Critical error in monitoring loop: {e}")
+                logger.error(traceback.format_exc())
+            finally:
+                if voter_system and hasattr(voter_system, 'stop_browser_monitoring_service'):
+                    await voter_system.stop_browser_monitoring_service()
+                
+                if voter_system and hasattr(voter_system, 'stop_auto_unpause_monitoring'):
+                    await voter_system.stop_auto_unpause_monitoring()
+        
+        # Schedule monitoring task
+        monitoring_task = asyncio.run_coroutine_threadsafe(monitoring_loop(), event_loop)
+        
+        logger.info("✅ Auto-start monitoring completed")
+        
+    except Exception as e:
+        logger.error(f"❌ Error in auto-start: {e}")
+        logger.error(traceback.format_exc())
+        monitoring_active = False
+
 if __name__ == '__main__':
     logger.info("🚀 Starting CloudVoter Backend Server...")
     logger.info(f"📍 Server will be available at http://localhost:5000")
+    
+    # Start auto-monitoring in background thread
+    auto_start_thread = Thread(target=auto_start_monitoring, daemon=True)
+    auto_start_thread.start()
     
     # Run with SocketIO
     socketio.run(app, host='0.0.0.0', port=5000, debug=False, allow_unsafe_werkzeug=True)

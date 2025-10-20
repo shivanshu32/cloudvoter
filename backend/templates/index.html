@@ -152,19 +152,11 @@
             <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-6">
                 <div class="flex items-center justify-between mb-6">
                     <h2 class="text-xl font-semibold text-gray-900">Control Panel</h2>
-                    <button id="start-btn" class="px-6 py-2 bg-green-600 hover:bg-green-700 text-white font-medium rounded-lg transition-colors duration-200 flex items-center space-x-2">
+                    <button id="restart-btn" class="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg transition-colors duration-200 flex items-center space-x-2">
                         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"></path>
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
                         </svg>
-                        <span>Start Monitoring</span>
-                    </button>
-                    <button id="stop-btn" class="px-6 py-2 bg-red-600 hover:bg-red-700 text-white font-medium rounded-lg transition-colors duration-200 hidden flex items-center space-x-2">
-                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 10a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z"></path>
-                        </svg>
-                        <span>Stop Monitoring</span>
+                        <span>Restart System</span>
                     </button>
                 </div>
 
@@ -403,8 +395,7 @@
         let monitoringActive = false;
 
         // DOM Elements
-        const startBtn = document.getElementById('start-btn');
-        const stopBtn = document.getElementById('stop-btn');
+        const restartBtn = document.getElementById('restart-btn');
         const votingUrlInput = document.getElementById('voting-url');
         const usernameInput = document.getElementById('username');
         const passwordInput = document.getElementById('password');
@@ -419,7 +410,8 @@
             initializeSocket();
             loadConfiguration();
             setupEventListeners();
-            checkMonitoringStatus();  // Check if monitoring is already running
+            // Monitoring starts automatically on server startup
+            monitoringActive = true;
             startPolling();
         });
 
@@ -447,7 +439,6 @@
 
             socket.on('status_update', (data) => {
                 monitoringActive = data.monitoring_active;
-                updateButtons();
             });
             
             socket.on('statistics_update', (data) => {
@@ -616,8 +607,7 @@
 
         // Setup event listeners
         function setupEventListeners() {
-            startBtn.addEventListener('click', startMonitoring);
-            stopBtn.addEventListener('click', stopMonitoring);
+            restartBtn.addEventListener('click', restartSystem);
             clearLogsBtn.addEventListener('click', clearLogs);
             
             // Save buttons
@@ -636,71 +626,40 @@
             });
         }
 
-        // Start monitoring
-        async function startMonitoring() {
-            try {
-                // Get credentials from inputs
-                const username = usernameInput.value.trim();
-                const password = passwordInput.value.trim();
-                const votingUrl = votingUrlInput.value.trim();
-                
-                // Send credentials in request body
-                const response = await fetch(`${API_URL}/api/start-monitoring`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        username: username || undefined,
-                        password: password || undefined,
-                        voting_url: votingUrl || undefined
-                    })
-                });
-                
-                const data = await response.json();
-                
-                if (data.status === 'started') {
-                    monitoringActive = true;
-                    updateButtons();
-                    addLog('🚀 Ultra monitoring started');
-                } else {
-                    addLog('⚠️ ' + data.message);
-                }
-            } catch (error) {
-                console.error('Error starting monitoring:', error);
-                addLog('❌ Failed to start monitoring: ' + error.message);
+        // Restart system
+        async function restartSystem() {
+            if (!confirm('Are you sure you want to restart the system? This will close all browsers and restart monitoring.')) {
+                return;
             }
-        }
-
-        // Stop monitoring
-        async function stopMonitoring() {
+            
             try {
-                const response = await fetch(`${API_URL}/api/stop-monitoring`, {
+                // Disable button during restart
+                restartBtn.disabled = true;
+                restartBtn.innerHTML = '<svg class="w-5 h-5 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg><span>Restarting...</span>';
+                
+                addLog('🔄 Restarting system...');
+                
+                const response = await fetch(`${API_URL}/api/restart`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' }
                 });
                 
                 const data = await response.json();
                 
-                if (data.status === 'stopped') {
-                    monitoringActive = false;
-                    updateButtons();
-                    addLog('⏹ Monitoring stopped');
+                if (data.status === 'success') {
+                    monitoringActive = true;
+                    addLog('✅ System restarted successfully');
+                    addLog('🚀 Monitoring active');
                 } else {
-                    addLog('⚠️ ' + data.message);
+                    addLog('❌ Restart failed: ' + data.message);
                 }
             } catch (error) {
-                console.error('Error stopping monitoring:', error);
-                addLog('❌ Failed to stop monitoring');
-            }
-        }
-
-        // Update buttons
-        function updateButtons() {
-            if (monitoringActive) {
-                startBtn.classList.add('hidden');
-                stopBtn.classList.remove('hidden');
-            } else {
-                startBtn.classList.remove('hidden');
-                stopBtn.classList.add('hidden');
+                console.error('Error restarting system:', error);
+                addLog('❌ Failed to restart system: ' + error.message);
+            } finally {
+                // Re-enable button
+                restartBtn.disabled = false;
+                restartBtn.innerHTML = '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg><span>Restart System</span>';
             }
         }
 
@@ -881,25 +840,6 @@
             if (status.includes('Cooldown') || status.includes('⏳')) return 'bg-blue-100 text-blue-800';
             if (status.includes('Login') || status.includes('🔑')) return 'bg-yellow-100 text-yellow-800';
             return 'bg-gray-100 text-gray-800';
-        }
-
-        // Check monitoring status on page load
-        async function checkMonitoringStatus() {
-            try {
-                const response = await fetch(`${API_URL}/api/status`);
-                const data = await response.json();
-                
-                if (data.monitoring_active) {
-                    monitoringActive = true;
-                    updateButtons();
-                    addLog('✅ Monitoring is already running');
-                } else {
-                    monitoringActive = false;
-                    updateButtons();
-                }
-            } catch (error) {
-                console.error('Error checking monitoring status:', error);
-            }
         }
 
         // Update countdown timers every second
@@ -1213,13 +1153,16 @@
                     browsersCount.textContent = data.browsers.length;
                     
                     browsersList.innerHTML = data.browsers.map(browser => `
-                        <div class="bg-white border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow">
+                        <div class="bg-white border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow" data-browser-id="${browser.browser_id}">
                             <div class="flex items-center justify-between">
                                 <div class="flex-1">
                                     <div class="flex items-center space-x-3 mb-2">
                                         <h3 class="text-lg font-semibold text-gray-900">Instance #${browser.instance_id}</h3>
                                         <span class="status-badge ${browser.browser_active ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'}">
                                             ${browser.browser_active ? '🟢 Active' : '⚫ Inactive'}
+                                        </span>
+                                        <span class="text-xs text-gray-500 font-mono">
+                                            Session: ${browser.browser_session_id}
                                         </span>
                                     </div>
                                     <div class="grid grid-cols-2 gap-2 text-sm text-gray-600">

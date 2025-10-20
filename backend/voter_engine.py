@@ -82,6 +82,7 @@ class VoterInstance:
         self.context = None
         self.page = None
         self.browser_start_time = None  # Track when browser was opened
+        self.browser_session_id = None  # Unique ID for each browser session
         
         # Instance state
         self.status = "Initializing"
@@ -351,8 +352,11 @@ class VoterInstance:
                 args=browser_args
             )
             
-            # Track browser start time
+            # Track browser start time and generate unique session ID
             self.browser_start_time = datetime.now()
+            import uuid
+            self.browser_session_id = str(uuid.uuid4())[:8]  # Short unique ID
+            logger.info(f"[BROWSER] Instance #{self.instance_id} browser session: {self.browser_session_id}")
             
             # Create context
             if use_session and os.path.exists(os.path.join(self.session_dir, 'storage_state.json')):
@@ -437,8 +441,11 @@ class VoterInstance:
                 args=browser_args
             )
             
-            # Track browser start time
+            # Track browser start time and generate unique session ID
             self.browser_start_time = datetime.now()
+            import uuid
+            self.browser_session_id = str(uuid.uuid4())[:8]  # Short unique ID
+            logger.info(f"[BROWSER] Instance #{self.instance_id} browser session: {self.browser_session_id}")
             
             # Create context with saved session
             self.context = await self.browser.new_context(
@@ -546,6 +553,49 @@ class VoterInstance:
         except Exception as e:
             logger.error(f"[LOGIN] Error checking login: {e}")
             return False
+    
+    async def check_login_button_exists(self):
+        """Check if page shows actual 'Login with Google' button (not just text)"""
+        try:
+            # Specific selectors for Google login button elements
+            login_button_selectors = [
+                'button:has-text("Login with Google")',
+                'a:has-text("Login with Google")',
+                'button:has-text("Sign in with Google")',
+                'a:has-text("Sign in with Google")',
+                '[role="button"]:has-text("Login with Google")',
+                '[role="button"]:has-text("Sign in with Google")',
+                # Google's actual login button classes
+                '.abcRioButton',  # Google Sign-In button
+                '.google-signin-button',
+                'button[aria-label*="Google"]',
+                'a[aria-label*="Google"]'
+            ]
+            
+            for selector in login_button_selectors:
+                try:
+                    button = await self.page.query_selector(selector)
+                    if button:
+                        # Verify it's visible (not hidden)
+                        is_visible = await button.is_visible()
+                        if is_visible:
+                            # Get button text to confirm it's a login button
+                            text = await button.inner_text()
+                            text_lower = text.lower() if text else ""
+                            
+                            # Verify it contains both "google" and ("login" or "sign in")
+                            if "google" in text_lower and ("login" in text_lower or "sign in" in text_lower):
+                                logger.warning(f"[LOGIN_BUTTON] Found visible login button with text: {text.strip()}")
+                                return True, text.strip()
+                except Exception as e:
+                    logger.debug(f"[LOGIN_CHECK] Error checking selector {selector}: {e}")
+                    continue
+            
+            return False, None
+            
+        except Exception as e:
+            logger.debug(f"[LOGIN_CHECK] Error checking for login button: {e}")
+            return False, None
     
     async def get_vote_count(self):
         """Get current vote count from page"""
@@ -1047,15 +1097,18 @@ class VoterInstance:
                         except Exception as e:
                             logger.debug(f"[ERROR_MSG] Could not extract error message: {e}")
                         
-                        # CRITICAL: Check if "Login with Google" detected
-                        if error_message_found and "login with google" in error_message_found.lower():
-                            logger.error(f"[LOGIN_REQUIRED] Instance #{self.instance_id} detected 'Login with Google' button!")
+                        # CRITICAL: Check if ACTUAL "Login with Google" BUTTON exists (not just text)
+                        login_button_found, login_button_text = await self.check_login_button_exists()
+                        
+                        if login_button_found:
+                            logger.error(f"[LOGIN_REQUIRED] Instance #{self.instance_id} detected actual 'Login with Google' BUTTON!")
+                            logger.error(f"[LOGIN_REQUIRED] Button text: '{login_button_text}'")
                             logger.error(f"[LOGIN_REQUIRED] Instance #{self.instance_id} will be EXCLUDED from voting cycles until script restart")
                             
                             # Mark instance as requiring login and exclude from cycles
                             self.login_detected = True
                             self.login_detected_time = datetime.now()
-                            self.login_detection_reason = f"Detected: {error_message_found}"
+                            self.login_detection_reason = f"Found login button: {login_button_text}"
                             self.excluded_from_cycles = True
                             self.status = "🔒 Login Required - EXCLUDED"
                             
@@ -1075,13 +1128,13 @@ class VoterInstance:
                                 voting_url=self.target_url,
                                 cooldown_message="",
                                 failure_type="login_required",
-                                failure_reason=f"Login with Google detected - Instance excluded from cycles",
+                                failure_reason=f"Login button found: {login_button_text}",
                                 initial_vote_count=initial_count,
                                 final_vote_count=final_count,
                                 proxy_ip=self.proxy_ip,
                                 session_id=self.session_id or "",
                                 click_attempts=click_attempts,
-                                error_message=error_message_found,
+                                error_message=login_button_text,
                                 browser_closed=True
                             )
                             
@@ -1558,6 +1611,7 @@ class VoterInstance:
             self.browser = None
             self.playwright = None
             self.browser_start_time = None
+            self.browser_session_id = None
 
 class MultiInstanceVoter:
     """Manager for multiple voting instances"""

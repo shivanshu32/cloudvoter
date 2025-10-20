@@ -66,7 +66,8 @@ SUCCESS_PATTERNS = [
 
 # Failure/cooldown message patterns (case-insensitive)
 FAILURE_PATTERNS = [
-    "hourly limit",
+    "hourly voting limit",  # Current message format (has "voting" in between)
+    "hourly limit",         # Legacy format (keep for compatibility)
     "already voted",
     "cooldown",
     "try again later",
@@ -78,7 +79,8 @@ FAILURE_PATTERNS = [
 # Global hourly limit patterns (these affect ALL instances, not just one)
 # Only these patterns should trigger global pause of all instances
 GLOBAL_HOURLY_LIMIT_PATTERNS = [
-    "hourly limit",
+    "hourly voting limit",  # Current message format
+    "hourly limit",         # Legacy format
     "someone has already voted out of this ip"
 ]
 
