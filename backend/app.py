@@ -625,6 +625,165 @@ def get_saved_sessions():
             'message': str(e)
         }), 500
 
+@app.route('/api/browsers', methods=['GET'])
+def get_browsers():
+    """Get all opened browsers with their status"""
+    global voter_system
+    
+    try:
+        browsers = []
+        
+        if voter_system and hasattr(voter_system, 'active_instances'):
+            for ip, instance in voter_system.active_instances.items():
+                # Check if browser is open
+                browser_active = instance.browser is not None and instance.page is not None
+                
+                # Calculate browser open duration
+                browser_open_duration = "0s"
+                if browser_active and hasattr(instance, 'browser_start_time'):
+                    duration_seconds = int((datetime.now() - instance.browser_start_time).total_seconds())
+                    if duration_seconds < 60:
+                        browser_open_duration = f"{duration_seconds}s"
+                    elif duration_seconds < 3600:
+                        browser_open_duration = f"{duration_seconds // 60}m {duration_seconds % 60}s"
+                    else:
+                        hours = duration_seconds // 3600
+                        minutes = (duration_seconds % 3600) // 60
+                        browser_open_duration = f"{hours}h {minutes}m"
+                
+                browsers.append({
+                    'instance_id': instance.instance_id,
+                    'ip': instance.proxy_ip or 'N/A',
+                    'status': instance.status,
+                    'vote_count': instance.vote_count,
+                    'browser_active': browser_active,
+                    'browser_open_duration': browser_open_duration,
+                    'is_paused': instance.is_paused,
+                    'waiting_for_login': instance.waiting_for_login
+                })
+        
+        return jsonify({
+            'status': 'success',
+            'browsers': sorted(browsers, key=lambda x: x['instance_id']),
+            'total': len(browsers),
+            'active_browsers': len([b for b in browsers if b['browser_active']])
+        })
+    
+    except Exception as e:
+        logger.error(f"Error getting browsers: {e}")
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        }), 500
+
+@app.route('/api/login-required-instances', methods=['GET'])
+def get_login_required_instances():
+    """Get all instances that require login (excluded from cycles)"""
+    global voter_system
+    
+    try:
+        login_required_instances = []
+        
+        if voter_system and hasattr(voter_system, 'active_instances'):
+            for ip, instance in voter_system.active_instances.items():
+                # Check if instance is excluded due to login requirement
+                if instance.excluded_from_cycles or instance.login_detected:
+                    # Format detection time
+                    detected_time = "Unknown"
+                    if instance.login_detected_time:
+                        time_diff = datetime.now() - instance.login_detected_time
+                        minutes = int(time_diff.total_seconds() / 60)
+                        if minutes < 60:
+                            detected_time = f"{minutes} min ago"
+                        else:
+                            hours = minutes // 60
+                            detected_time = f"{hours} hours ago"
+                    
+                    login_required_instances.append({
+                        'instance_id': instance.instance_id,
+                        'ip': instance.proxy_ip or 'N/A',
+                        'status': instance.status,
+                        'vote_count': instance.vote_count,
+                        'login_detected': instance.login_detected,
+                        'login_detected_time': detected_time,
+                        'login_detection_reason': instance.login_detection_reason or 'Login with Google button detected',
+                        'excluded_from_cycles': instance.excluded_from_cycles
+                    })
+        
+        return jsonify({
+            'status': 'success',
+            'instances': sorted(login_required_instances, key=lambda x: x['instance_id']),
+            'total': len(login_required_instances)
+        })
+    
+    except Exception as e:
+        logger.error(f"Error getting login required instances: {e}")
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        }), 500
+
+@app.route('/api/force-close-browser/<int:instance_id>', methods=['POST'])
+def force_close_browser(instance_id):
+    """Force close browser for a specific instance"""
+    global voter_system
+    
+    try:
+        if not voter_system:
+            return jsonify({
+                'status': 'error',
+                'message': 'Voter system not initialized'
+            }), 400
+        
+        # Find the instance
+        instance = None
+        for ip, inst in voter_system.active_instances.items():
+            if inst.instance_id == instance_id:
+                instance = inst
+                break
+        
+        if not instance:
+            return jsonify({
+                'status': 'error',
+                'message': f'Instance #{instance_id} not found'
+            }), 404
+        
+        # Check if browser is open
+        if not instance.browser and not instance.page:
+            return jsonify({
+                'status': 'error',
+                'message': f'Instance #{instance_id} has no open browser'
+            }), 400
+        
+        # Force close browser
+        async def close_browser_async():
+            try:
+                await instance.close_browser()
+                logger.info(f"[FORCE_CLOSE] Browser force closed for instance #{instance_id}")
+            except Exception as e:
+                logger.error(f"[FORCE_CLOSE] Error closing browser for instance #{instance_id}: {e}")
+        
+        # Run async close in event loop
+        if event_loop:
+            asyncio.run_coroutine_threadsafe(close_browser_async(), event_loop)
+            
+            return jsonify({
+                'status': 'success',
+                'message': f'Browser force closed for instance #{instance_id}'
+            })
+        else:
+            return jsonify({
+                'status': 'error',
+                'message': 'Event loop not available'
+            }), 500
+    
+    except Exception as e:
+        logger.error(f"Error force closing browser: {e}")
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        }), 500
+
 @app.route('/api/save-login/<int:instance_id>', methods=['POST'])
 def save_google_login(instance_id):
     """Open browser for manual Google login and save session"""

@@ -119,6 +119,22 @@
                             <span>Sessions</span>
                         </span>
                     </button>
+                    <button class="tab-btn" onclick="switchTab('browsers')">
+                        <span class="flex items-center space-x-2">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path>
+                            </svg>
+                            <span>Opened Browsers</span>
+                        </span>
+                    </button>
+                    <button class="tab-btn" onclick="switchTab('login-required')">
+                        <span class="flex items-center space-x-2">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path>
+                            </svg>
+                            <span>Login Required</span>
+                        </span>
+                    </button>
                     <button class="tab-btn" onclick="switchTab('logs')">
                         <span class="flex items-center space-x-2">
                             <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -287,6 +303,59 @@
                 </div>
             </div>
             <!-- End Sessions Tab -->
+
+            <!-- Opened Browsers Tab -->
+            <div id="browsers-tab" class="tab-content">
+                <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-6">
+                    <div class="flex items-center justify-between mb-6">
+                        <div>
+                            <h2 class="text-xl font-semibold text-gray-900">Opened Browsers</h2>
+                            <p class="text-sm text-gray-500 mt-1">Real-time tracking of headless browser instances</p>
+                        </div>
+                        <div class="flex items-center space-x-4">
+                            <span id="browsers-count" class="text-sm font-medium text-gray-600">
+                                <span class="text-2xl font-bold text-blue-600" id="open-browsers-count">0</span> browsers open
+                            </span>
+                        </div>
+                    </div>
+                    <div id="browsers-list" class="space-y-3">
+                        <p class="text-center text-gray-500 py-8">No browsers currently open</p>
+                    </div>
+                </div>
+            </div>
+            <!-- End Opened Browsers Tab -->
+
+            <!-- Login Required Tab -->
+            <div id="login-required-tab" class="tab-content">
+                <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-6">
+                    <div class="flex items-center justify-between mb-6">
+                        <div>
+                            <h2 class="text-xl font-semibold text-gray-900">Login Required Instances</h2>
+                            <p class="text-sm text-gray-500 mt-1">Instances that need Google login (excluded from voting cycles)</p>
+                        </div>
+                        <div class="flex items-center space-x-4">
+                            <span id="login-required-count" class="text-sm font-medium text-gray-600">
+                                <span class="text-2xl font-bold text-red-600" id="login-required-instances-count">0</span> instances
+                            </span>
+                        </div>
+                    </div>
+                    <div class="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-4">
+                        <div class="flex items-start space-x-3">
+                            <svg class="w-5 h-5 text-yellow-600 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>
+                            </svg>
+                            <div class="flex-1">
+                                <h3 class="text-sm font-medium text-yellow-800">⚠️ Manual Login Required</h3>
+                                <p class="text-sm text-yellow-700 mt-1">These instances detected "Login with Google" button and have been excluded from voting cycles. Restart the script to re-enable them after logging in manually.</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div id="login-required-list" class="space-y-3">
+                        <p class="text-center text-gray-500 py-8">No instances require login</p>
+                    </div>
+                </div>
+            </div>
+            <!-- End Login Required Tab -->
 
             <!-- Logs Tab -->
             <div id="logs-tab" class="tab-content">
@@ -896,6 +965,16 @@
             if (tabName === 'sessions') {
                 loadSessions();
             }
+            
+            // Load browsers if browsers tab
+            if (tabName === 'browsers') {
+                loadBrowsers();
+            }
+            
+            // Load login required instances if login-required tab
+            if (tabName === 'login-required') {
+                loadLoginRequiredInstances();
+            }
         }
 
         // Load sessions
@@ -1120,6 +1199,166 @@
                 return lastVote;
             }
         }
+
+        // Load browsers
+        async function loadBrowsers() {
+            try {
+                const response = await fetch(`${API_URL}/api/browsers`);
+                const data = await response.json();
+                
+                const browsersList = document.getElementById('browsers-list');
+                const browsersCount = document.getElementById('open-browsers-count');
+                
+                if (data.browsers && data.browsers.length > 0) {
+                    browsersCount.textContent = data.browsers.length;
+                    
+                    browsersList.innerHTML = data.browsers.map(browser => `
+                        <div class="bg-white border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow">
+                            <div class="flex items-center justify-between">
+                                <div class="flex-1">
+                                    <div class="flex items-center space-x-3 mb-2">
+                                        <h3 class="text-lg font-semibold text-gray-900">Instance #${browser.instance_id}</h3>
+                                        <span class="status-badge ${browser.browser_active ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'}">
+                                            ${browser.browser_active ? '🟢 Active' : '⚫ Inactive'}
+                                        </span>
+                                    </div>
+                                    <div class="grid grid-cols-2 gap-2 text-sm text-gray-600">
+                                        <div>
+                                            <span class="font-medium">IP:</span> ${browser.ip || 'N/A'}
+                                        </div>
+                                        <div>
+                                            <span class="font-medium">Status:</span> ${browser.status || 'Unknown'}
+                                        </div>
+                                        <div>
+                                            <span class="font-medium">Votes:</span> ${browser.vote_count || 0}
+                                        </div>
+                                        <div>
+                                            <span class="font-medium">Browser Open:</span> ${browser.browser_open_duration || '0s'}
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="ml-4">
+                                    <button 
+                                        onclick="forceCloseBrowser(${browser.instance_id})" 
+                                        class="px-4 py-2 bg-red-600 hover:bg-red-700 text-white font-medium rounded-lg transition-colors flex items-center space-x-2"
+                                        ${!browser.browser_active ? 'disabled' : ''}
+                                    >
+                                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                                        </svg>
+                                        <span>Force Close</span>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    `).join('');
+                } else {
+                    browsersCount.textContent = '0';
+                    browsersList.innerHTML = '<p class="text-center text-gray-500 py-8">No browsers currently open</p>';
+                }
+            } catch (error) {
+                console.error('Error loading browsers:', error);
+                document.getElementById('browsers-list').innerHTML = '<p class="text-center text-red-500 py-8">Failed to load browsers</p>';
+            }
+        }
+
+        // Force close browser
+        async function forceCloseBrowser(instanceId) {
+            if (!confirm(`Are you sure you want to force close browser for Instance #${instanceId}?`)) {
+                return;
+            }
+            
+            try {
+                addLog(`🔴 Force closing browser for instance #${instanceId}...`);
+                
+                const response = await fetch(`${API_URL}/api/force-close-browser/${instanceId}`, {
+                    method: 'POST'
+                });
+                const data = await response.json();
+                
+                if (data.status === 'success') {
+                    addLog(`✅ ${data.message}`);
+                    loadBrowsers(); // Refresh browsers list
+                } else {
+                    addLog(`❌ ${data.message}`);
+                    alert(data.message);
+                }
+            } catch (error) {
+                console.error('Error force closing browser:', error);
+                addLog(`❌ Failed to force close browser for instance #${instanceId}`);
+                alert('Failed to force close browser');
+            }
+        }
+
+        // Auto-refresh browsers list when tab is active
+        setInterval(() => {
+            const browsersTab = document.getElementById('browsers-tab');
+            if (browsersTab && browsersTab.classList.contains('active')) {
+                loadBrowsers();
+            }
+        }, 3000); // Refresh every 3 seconds
+
+        // Load login required instances
+        async function loadLoginRequiredInstances() {
+            try {
+                const response = await fetch(`${API_URL}/api/login-required-instances`);
+                const data = await response.json();
+                
+                const loginRequiredList = document.getElementById('login-required-list');
+                const loginRequiredCount = document.getElementById('login-required-instances-count');
+                
+                if (data.instances && data.instances.length > 0) {
+                    loginRequiredCount.textContent = data.instances.length;
+                    
+                    loginRequiredList.innerHTML = data.instances.map(instance => `
+                        <div class="bg-red-50 border border-red-200 rounded-lg p-4">
+                            <div class="flex items-start justify-between">
+                                <div class="flex-1">
+                                    <div class="flex items-center space-x-3 mb-2">
+                                        <h3 class="text-lg font-semibold text-gray-900">Instance #${instance.instance_id}</h3>
+                                        <span class="status-badge bg-red-100 text-red-800">
+                                            🔒 Login Required
+                                        </span>
+                                    </div>
+                                    <div class="grid grid-cols-2 gap-2 text-sm text-gray-600 mb-3">
+                                        <div>
+                                            <span class="font-medium">IP:</span> ${instance.ip || 'N/A'}
+                                        </div>
+                                        <div>
+                                            <span class="font-medium">Status:</span> ${instance.status || 'Unknown'}
+                                        </div>
+                                        <div>
+                                            <span class="font-medium">Votes:</span> ${instance.vote_count || 0}
+                                        </div>
+                                        <div>
+                                            <span class="font-medium">Detected:</span> ${instance.login_detected_time || 'Unknown'}
+                                        </div>
+                                    </div>
+                                    <div class="bg-white border border-red-200 rounded p-2 text-sm">
+                                        <span class="font-medium text-red-700">Reason:</span>
+                                        <span class="text-gray-700">${instance.login_detection_reason || 'Login with Google button detected'}</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    `).join('');
+                } else {
+                    loginRequiredCount.textContent = '0';
+                    loginRequiredList.innerHTML = '<p class="text-center text-gray-500 py-8">No instances require login</p>';
+                }
+            } catch (error) {
+                console.error('Error loading login required instances:', error);
+                document.getElementById('login-required-list').innerHTML = '<p class="text-center text-red-500 py-8">Failed to load login required instances</p>';
+            }
+        }
+
+        // Auto-refresh login required list when tab is active
+        setInterval(() => {
+            const loginRequiredTab = document.getElementById('login-required-tab');
+            if (loginRequiredTab && loginRequiredTab.classList.contains('active')) {
+                loadLoginRequiredInstances();
+            }
+        }, 5000); // Refresh every 5 seconds
 
         // Modal event listeners
         document.getElementById('cancel-login-btn').addEventListener('click', hideSaveLoginModal);

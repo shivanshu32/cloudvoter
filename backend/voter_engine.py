@@ -81,12 +81,17 @@ class VoterInstance:
         self.browser = None
         self.context = None
         self.page = None
+        self.browser_start_time = None  # Track when browser was opened
         
         # Instance state
         self.status = "Initializing"
         self.is_paused = False
         self.waiting_for_login = False
         self.login_required = False
+        self.login_detected = False  # True if "Login with Google" detected
+        self.login_detected_time = None  # When login was detected
+        self.login_detection_reason = None  # Reason for login detection
+        self.excluded_from_cycles = False  # True if permanently excluded until restart
         self.pause_event = asyncio.Event()
         self.pause_event.set()
         
@@ -346,6 +351,9 @@ class VoterInstance:
                 args=browser_args
             )
             
+            # Track browser start time
+            self.browser_start_time = datetime.now()
+            
             # Create context
             if use_session and os.path.exists(os.path.join(self.session_dir, 'storage_state.json')):
                 # Restore session
@@ -428,6 +436,9 @@ class VoterInstance:
                 },
                 args=browser_args
             )
+            
+            # Track browser start time
+            self.browser_start_time = datetime.now()
             
             # Create context with saved session
             self.context = await self.browser.new_context(
@@ -791,15 +802,29 @@ class VoterInstance:
                     return False
                     
                 else:
-                    # Count didn't increase - wait for page to fully load and check for error messages
+                    # Count didn't increase - investigate why
                     logger.info(f"[FAILED] Vote count did not increase: {initial_count} -> {final_count}")
-                    logger.info(f"[WAIT] Waiting for page to fully load and display error message...")
+                    logger.info(f"[INVESTIGATE] Checking if vote button click was successful...")
+                    
+                    # CRITICAL: Check if vote button is still visible (indicates click failed)
+                    button_still_visible = False
+                    try:
+                        for selector in vote_selectors:
+                            button = await self.page.query_selector(selector)
+                            if button and await button.is_visible():
+                                button_still_visible = True
+                                logger.warning(f"[CLICK_FAILED] Vote button still visible after click - click was NOT successful!")
+                                break
+                    except Exception as e:
+                        logger.debug(f"[CHECK] Error checking button visibility: {e}")
                     
                     # Wait additional time for error message to appear (page might still be loading)
+                    logger.info(f"[WAIT] Waiting for page to fully load and display error message...")
                     await asyncio.sleep(5)
                     
                     page_content = await self.page.content()
                     cooldown_message = ""
+                    error_message_found = ""
                     
                     # Check for failure patterns from config
                     if any(pattern in page_content.lower() for pattern in FAILURE_PATTERNS):
@@ -901,37 +926,95 @@ class VoterInstance:
                         else:
                             logger.info(f"[INSTANCE_COOLDOWN] Instance #{self.instance_id} will wait individually, other instances continue")
                     else:
-                        # No error message found - try to extract any visible text from button/page
+                        # No cooldown pattern found - check if click failed or other issue
                         logger.error(f"[FAILED] Vote failed - count unchanged and no known error pattern detected")
-                        logger.info(f"[DIAGNOSTIC] Attempting to extract page status message...")
                         
-                        # Try to extract any message from the page for diagnostics
-                        diagnostic_message = "Vote count unchanged, no error message found"
+                        # Try to extract error message from below the vote button
+                        error_message_found = ""
                         try:
-                            # Check button text
-                            button_selectors = [
-                                '.pc-image-info-box-button-btn-text',
-                                '.pc-hiddenbutton',
+                            # Common selectors for error messages near vote button
+                            error_selectors = [
+                                '.pc-image-info-box-button-btn-text',  # Button text area
+                                '.pc-hiddenbutton .pc-image-info-box-button-btn-text',
                                 'div.pc-image-info-box-button-btn',
-                                '.blink'
+                                '.error-message', '.alert', '.message',
+                                '[class*="error"]', '[class*="message"]'
                             ]
-                            for selector in button_selectors:
+                            
+                            for selector in error_selectors:
                                 try:
                                     element = await self.page.query_selector(selector)
                                     if element:
                                         text = await element.inner_text()
-                                        if text and text.strip():
-                                            diagnostic_message = f"Button text: {text.strip()[:100]}"
-                                            logger.info(f"[DIAGNOSTIC] Found button text: {text.strip()[:100]}")
+                                        if text and text.strip() and text.strip().upper() != "CLICK TO VOTE":
+                                            error_message_found = text.strip()[:200]
+                                            logger.info(f"[ERROR_MSG] Found error message: {error_message_found}")
                                             break
                                 except:
                                     continue
                         except Exception as e:
-                            logger.debug(f"[DIAGNOSTIC] Could not extract diagnostic info: {e}")
+                            logger.debug(f"[ERROR_MSG] Could not extract error message: {e}")
                         
-                        # Track last attempt (failed) and store reason
+                        # CRITICAL: Check if "Login with Google" detected
+                        if error_message_found and "login with google" in error_message_found.lower():
+                            logger.error(f"[LOGIN_REQUIRED] Instance #{self.instance_id} detected 'Login with Google' button!")
+                            logger.error(f"[LOGIN_REQUIRED] Instance #{self.instance_id} will be EXCLUDED from voting cycles until script restart")
+                            
+                            # Mark instance as requiring login and exclude from cycles
+                            self.login_detected = True
+                            self.login_detected_time = datetime.now()
+                            self.login_detection_reason = f"Detected: {error_message_found}"
+                            self.excluded_from_cycles = True
+                            self.status = "🔒 Login Required - EXCLUDED"
+                            
+                            # Pause the instance permanently
+                            self.is_paused = True
+                            self.pause_event.clear()
+                            
+                            # Close browser
+                            await self.close_browser()
+                            
+                            # Log the exclusion
+                            self.vote_logger.log_vote_attempt(
+                                instance_id=self.instance_id,
+                                instance_name=f"Instance_{self.instance_id}",
+                                time_of_click=click_time,
+                                status="failed",
+                                voting_url=self.target_url,
+                                cooldown_message="",
+                                failure_type="login_required",
+                                failure_reason=f"Login with Google detected - Instance excluded from cycles",
+                                initial_vote_count=initial_count,
+                                final_vote_count=final_count,
+                                proxy_ip=self.proxy_ip,
+                                session_id=self.session_id or "",
+                                click_attempts=click_attempts,
+                                error_message=error_message_found,
+                                browser_closed=True
+                            )
+                            
+                            return False
+                        
+                        # Determine specific failure reason
+                        if button_still_visible:
+                            # Vote button still visible = click failed
+                            if error_message_found:
+                                failure_reason = f"Click failed - {error_message_found}"
+                            else:
+                                failure_reason = "Click failed - Button still visible (popup may have reappeared)"
+                            logger.error(f"[FAILURE] {failure_reason}")
+                        elif error_message_found:
+                            # Button disappeared but error message present
+                            failure_reason = error_message_found
+                            logger.error(f"[FAILURE] Error message: {failure_reason}")
+                        else:
+                            # Button disappeared, no error message, but count didn't increase
+                            failure_reason = "Vote not counted (unknown reason)"
+                            logger.error(f"[FAILURE] {failure_reason}")
+                        
+                        # Track last attempt (failed) and store specific reason
                         self.last_attempted_vote = datetime.now()
-                        self.last_failure_reason = diagnostic_message
+                        self.last_failure_reason = failure_reason
                         self.last_failure_type = "technical"  # Technical failure
                         
                         # Log failed vote with comprehensive data
@@ -943,13 +1026,13 @@ class VoterInstance:
                             voting_url=self.target_url,
                             cooldown_message="",
                             failure_type="technical",
-                            failure_reason=diagnostic_message,
+                            failure_reason=failure_reason,
                             initial_vote_count=initial_count,
                             final_vote_count=final_count,
                             proxy_ip=self.proxy_ip,
                             session_id=self.session_id or "",
                             click_attempts=click_attempts,
-                            error_message="Count unchanged after 8 seconds wait",
+                            error_message=f"Button visible: {button_still_visible}, Error msg: {error_message_found or 'None'}",
                             browser_closed=True
                         )
                         
@@ -1158,6 +1241,14 @@ class VoterInstance:
             logger.info(f"[CYCLE] Instance #{self.instance_id} starting voting cycle")
             
             while True:
+                # CRITICAL: Check if instance is excluded from cycles (login required)
+                if self.excluded_from_cycles:
+                    logger.warning(f"[EXCLUDED] Instance #{self.instance_id} is excluded from cycles (login required)")
+                    logger.warning(f"[EXCLUDED] Instance #{self.instance_id} will remain paused until script restart")
+                    # Permanently pause this instance
+                    await asyncio.sleep(3600)  # Sleep for 1 hour, then check again
+                    continue
+                
                 # Check if paused, but also check if cooldown has expired
                 if self.is_paused:
                     # Check if this instance should be auto-unpaused
@@ -1374,6 +1465,7 @@ class VoterInstance:
             self.context = None
             self.browser = None
             self.playwright = None
+            self.browser_start_time = None
 
 class MultiInstanceVoter:
     """Manager for multiple voting instances"""
@@ -1770,6 +1862,10 @@ class MultiInstanceVoter:
                 try:
                     # Check all paused instances
                     for ip, instance in list(self.active_instances.items()):
+                        # Skip excluded instances (login required)
+                        if instance.excluded_from_cycles:
+                            continue
+                        
                         if instance.is_paused and not instance.waiting_for_login:
                             # Get time until next vote
                             time_info = instance.get_time_until_next_vote()

@@ -37,6 +37,14 @@ class VoteLogger:
             'error_message',
             'browser_closed'
         ]
+        
+        # Session-based counters (reset when script starts)
+        self.session_total_attempts = 0
+        self.session_successful_votes = 0
+        self.session_failed_votes = 0
+        self.session_hourly_limits = 0
+        self._counter_lock = threading.Lock()  # Thread-safe counter access
+        
         self._ensure_log_file()
     
     def _ensure_log_file(self):
@@ -118,6 +126,22 @@ class VoteLogger:
                         writer = csv.DictWriter(file, fieldnames=self.fieldnames)
                         writer.writerow(log_entry)
                         file.flush()  # Ensure data is written immediately
+                
+                # Update session counters (thread-safe)
+                with self._counter_lock:
+                    self.session_total_attempts += 1
+                    
+                    status_lower = status.lower()
+                    if 'success' in status_lower:
+                        self.session_successful_votes += 1
+                    elif 'fail' in status_lower or 'error' in status_lower:
+                        self.session_failed_votes += 1
+                    
+                    # Check for hourly limit/cooldown
+                    if failure_type and ('cooldown' in failure_type.lower() or 'hourly' in failure_type.lower()):
+                        self.session_hourly_limits += 1
+                    elif cooldown_message:
+                        self.session_hourly_limits += 1
                 
                 # Success - break retry loop
                 break
@@ -218,8 +242,31 @@ class VoteLogger:
             print(f"Error calculating success rate: {e}")
             return {"total": 0, "successful": 0, "failed": 0, "success_rate": 0.0}
     
+    def get_session_statistics(self) -> Dict:
+        """Get voting statistics for current session only (since script started)"""
+        with self._counter_lock:
+            stats = {
+                'total_attempts': self.session_total_attempts,
+                'successful_votes': self.session_successful_votes,
+                'failed_votes': self.session_failed_votes,
+                'hourly_limits': self.session_hourly_limits,
+                'success_rate': 0.0,
+                'active_instances': 0  # Will be set by caller
+            }
+            
+            # Calculate success rate
+            if stats['total_attempts'] > 0:
+                stats['success_rate'] = (stats['successful_votes'] / stats['total_attempts']) * 100
+            
+            return stats
+    
     def get_statistics(self) -> Dict:
-        """Get voting statistics"""
+        """Get voting statistics (returns session stats, not CSV file stats)"""
+        # Return session-based statistics instead of reading from CSV
+        return self.get_session_statistics()
+    
+    def get_statistics_from_csv(self) -> Dict:
+        """Get voting statistics from CSV file (all-time history)"""
         stats = {
             'total_attempts': 0,
             'successful_votes': 0,
