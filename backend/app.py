@@ -186,6 +186,23 @@ def start_monitoring():
                     except Exception as e:
                         logger.error(f"Error emitting statistics: {e}")
                     
+                    # Emit instance updates
+                    try:
+                        if voter_system and hasattr(voter_system, 'active_instances'):
+                            instances = []
+                            for ip, instance in voter_system.active_instances.items():
+                                instances.append({
+                                    'instance_id': getattr(instance, 'instance_id', None),
+                                    'ip': ip,
+                                    'status': getattr(instance, 'status', 'Unknown'),
+                                    'is_paused': getattr(instance, 'is_paused', False),
+                                    'waiting_for_login': getattr(instance, 'waiting_for_login', False),
+                                    'vote_count': getattr(instance, 'vote_count', 0)
+                                })
+                            socketio.emit('instances_update', {'instances': instances})
+                    except Exception as e:
+                        logger.error(f"Error emitting instances update: {e}")
+                    
                     # Check for ready instances
                     try:
                         # CRITICAL: Check if global hourly limit is active before launching

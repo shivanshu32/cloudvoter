@@ -370,6 +370,15 @@
                 document.getElementById('stat-failed').textContent = data.failed_votes || 0;
                 document.getElementById('stat-active').textContent = data.active_instances || 0;
             });
+            
+            socket.on('instances_update', (data) => {
+                // Update instances in real-time via Socket.IO
+                if (data.instances && data.instances.length > 0) {
+                    renderInstances(data.instances);
+                } else {
+                    instancesContainer.innerHTML = '<p class="text-sm text-gray-500 text-center py-8">No active instances</p>';
+                }
+            });
         }
 
         // Update connection status
@@ -559,30 +568,57 @@
             }
         }
 
-        // Update instances
+        // Render instances (used by both polling and Socket.IO)
+        function renderInstances(instances) {
+            if (!instances || instances.length === 0) {
+                instancesContainer.innerHTML = '<p class="text-sm text-gray-500 text-center py-8">No active instances</p>';
+                return;
+            }
+            
+            // Sort instances by instance_id for consistent ordering
+            const sortedInstances = instances.sort((a, b) => {
+                const idA = typeof a.instance_id === 'number' ? a.instance_id : 999;
+                const idB = typeof b.instance_id === 'number' ? b.instance_id : 999;
+                return idA - idB;
+            });
+            
+            // Build new HTML
+            const newHTML = sortedInstances.map(instance => {
+                const instanceId = String(instance.instance_id);
+                return `
+                <div class="mb-3 p-3 bg-gray-50 rounded-lg border border-gray-200" data-instance-id="${instanceId}">
+                    <div class="flex items-center justify-between mb-2">
+                        <span class="font-medium text-gray-900">Instance #${instance.instance_id}</span>
+                        <span class="status-badge ${getStatusColor(instance.status)}">
+                            ${instance.status}
+                        </span>
+                    </div>
+                    <div class="text-sm text-gray-600 space-y-1">
+                        <div>IP: ${instance.ip || 'N/A'}</div>
+                        <div>Votes: ${instance.vote_count || 0}</div>
+                        ${instance.is_paused ? '<div class="text-orange-600">⏸️ Paused</div>' : ''}
+                    </div>
+                </div>
+                `;
+            }).join('');
+            
+            // Only update if content changed to avoid flickering
+            const currentHTML = instancesContainer.innerHTML.trim();
+            const newHTMLTrimmed = newHTML.trim();
+            if (currentHTML !== newHTMLTrimmed) {
+                instancesContainer.innerHTML = newHTML;
+                console.log(`[UI] Updated ${sortedInstances.length} instance cards`);
+            }
+        }
+        
+        // Update instances via polling (fallback)
         async function updateInstances() {
             try {
                 const response = await fetch(`${API_URL}/api/instances`);
                 const data = await response.json();
                 
-                if (data.instances && data.instances.length > 0) {
-                    instancesContainer.innerHTML = data.instances.map(instance => `
-                        <div class="mb-3 p-3 bg-gray-50 rounded-lg border border-gray-200">
-                            <div class="flex items-center justify-between mb-2">
-                                <span class="font-medium text-gray-900">Instance #${instance.instance_id}</span>
-                                <span class="status-badge ${getStatusColor(instance.status)}">
-                                    ${instance.status}
-                                </span>
-                            </div>
-                            <div class="text-sm text-gray-600 space-y-1">
-                                <div>IP: ${instance.ip || 'N/A'}</div>
-                                <div>Votes: ${instance.vote_count || 0}</div>
-                            </div>
-                        </div>
-                    `).join('');
-                } else {
-                    instancesContainer.innerHTML = '<p class="text-sm text-gray-500 text-center py-8">No active instances</p>';
-                }
+                console.log(`[POLL] Fetched ${data.instances?.length || 0} instances`);
+                renderInstances(data.instances);
             } catch (error) {
                 console.error('Error updating instances:', error);
             }
