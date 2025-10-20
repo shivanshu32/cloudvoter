@@ -177,6 +177,7 @@ def start_monitoring():
                     await voter_system.start_browser_monitoring_service()
                 
                 loop_count = 0
+                last_scan_time = 0  # Track last session scan time
                 while monitoring_active:
                     loop_count += 1
                     
