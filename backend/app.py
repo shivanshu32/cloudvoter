@@ -15,7 +15,7 @@ from threading import Thread
 import traceback
 
 from voter_engine import MultiInstanceVoter, VoterInstance
-from config import TARGET_URL, TARGET_URLS, BRIGHT_DATA_USERNAME, BRIGHT_DATA_PASSWORD
+from config import TARGET_URL, TARGET_URLS, BRIGHT_DATA_USERNAME, BRIGHT_DATA_PASSWORD, SESSION_SCAN_INTERVAL
 from vote_logger import VoteLogger
 
 # Configure logging
