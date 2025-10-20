@@ -106,6 +106,15 @@ MAX_CONCURRENT_BROWSER_LAUNCHES = 1  # Maximum number of browsers that can launc
 RETRY_DELAY_TECHNICAL = 5   # Technical failures (button not found, exception, etc.)
 RETRY_DELAY_COOLDOWN = 31   # IP cooldown / hourly limit (respect voting restrictions)
 
+# Proxy retry configuration
+PROXY_MAX_RETRIES = 3       # Maximum retries for getting proxy IP
+PROXY_RETRY_DELAY = 2       # Base delay in seconds (exponential backoff)
+PROXY_503_CIRCUIT_BREAKER_THRESHOLD = 3  # Consecutive 503s before pausing
+PROXY_503_PAUSE_DURATION = 60  # Seconds to pause after circuit breaker trips
+
+# Session scanning configuration
+SESSION_SCAN_INTERVAL = 60  # Seconds between saved session scans (reduced from ~38s)
+
 # Logging configuration
 LOG_LEVEL = "INFO"
 LOG_FORMAT = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'

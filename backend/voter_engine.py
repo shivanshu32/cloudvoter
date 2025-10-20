@@ -19,7 +19,9 @@ from config import (
     ENABLE_RESOURCE_BLOCKING, BLOCK_IMAGES, BLOCK_STYLESHEETS, 
     BLOCK_FONTS, BLOCK_TRACKING, BROWSER_LAUNCH_DELAY, MAX_CONCURRENT_BROWSER_LAUNCHES,
     FAILURE_PATTERNS, RETRY_DELAY_TECHNICAL, RETRY_DELAY_COOLDOWN,
-    GLOBAL_HOURLY_LIMIT_PATTERNS, INSTANCE_COOLDOWN_PATTERNS
+    GLOBAL_HOURLY_LIMIT_PATTERNS, INSTANCE_COOLDOWN_PATTERNS,
+    PROXY_MAX_RETRIES, PROXY_RETRY_DELAY, PROXY_503_CIRCUIT_BREAKER_THRESHOLD,
+    PROXY_503_PAUSE_DURATION, SESSION_SCAN_INTERVAL
 )
 
 logger = logging.getLogger(__name__)
@@ -1101,17 +1103,47 @@ class VoterInstance:
                 
                 # CRITICAL: Check for hourly limit AFTER navigation
                 if await self.check_hourly_voting_limit():
-                    logger.info(f"[LIMIT] Instance #{self.instance_id} hourly voting limit detected - closing browser")
-                    await self.close_browser()
+                    logger.info(f"[LIMIT] Instance #{self.instance_id} limit detected - analyzing type...")
                     
-                    # Trigger global hourly limit handling
-                    if self.voter_manager:
-                        asyncio.create_task(self.voter_manager.handle_hourly_limit())
-                    
-                    # Pause this instance
-                    self.is_paused = True
-                    self.pause_event.clear()
-                    continue
+                    # Get page content to determine if global or instance-specific
+                    try:
+                        page_content = await self.page.content()
+                        
+                        # Check if this is a GLOBAL hourly limit or INSTANCE-SPECIFIC cooldown
+                        is_global_limit = any(pattern in page_content.lower() for pattern in GLOBAL_HOURLY_LIMIT_PATTERNS)
+                        is_instance_cooldown = any(pattern in page_content.lower() for pattern in INSTANCE_COOLDOWN_PATTERNS)
+                        
+                        if is_global_limit:
+                            logger.warning(f"[GLOBAL_LIMIT] Instance #{self.instance_id} detected GLOBAL hourly limit - will pause ALL instances")
+                            await self.close_browser()
+                            
+                            # Trigger global hourly limit handling
+                            if self.voter_manager:
+                                asyncio.create_task(self.voter_manager.handle_hourly_limit())
+                            
+                            # Pause this instance
+                            self.is_paused = True
+                            self.pause_event.clear()
+                            continue
+                            
+                        elif is_instance_cooldown:
+                            logger.info(f"[INSTANCE_COOLDOWN] Instance #{self.instance_id} in instance-specific cooldown (pre-vote) - only this instance affected")
+                            await self.close_browser()
+                            
+                            # Don't trigger global pause, just close browser and continue cycle
+                            # The instance will wait in its normal voting cycle
+                            continue
+                        else:
+                            # Unknown pattern - treat as instance-specific to be safe (don't pause all instances)
+                            logger.warning(f"[LIMIT] Instance #{self.instance_id} detected unknown limit pattern - treating as instance-specific (safe default)")
+                            await self.close_browser()
+                            continue
+                            
+                    except Exception as e:
+                        logger.error(f"[LIMIT] Error analyzing limit type: {e}")
+                        # On error, don't trigger global pause (safe default)
+                        await self.close_browser()
+                        continue
                 
                 # Check if login required
                 if await self.check_login_required():
@@ -1283,45 +1315,95 @@ class MultiInstanceVoter:
         self.browser_launch_semaphore = asyncio.Semaphore(MAX_CONCURRENT_BROWSER_LAUNCHES)
         self.browser_launch_delay = BROWSER_LAUNCH_DELAY  # Seconds to wait between browser launches
         self.sequential_resume_active = False
+        
+        # Circuit breaker for proxy 503 errors
+        self.consecutive_503_errors = 0
+        self.circuit_breaker_active = False
+        self.circuit_breaker_reset_time = None
     
     async def get_proxy_ip(self, excluded_ips: Set[str] = None) -> Optional[tuple]:
-        """Get unique IP from Bright Data proxy"""
-        try:
-            import urllib.request
-            import json
-            
-            # Generate unique session ID
-            session_id = ''.join(random.choices(string.ascii_lowercase + string.digits, k=10))
-            
-            # Create proxy auth with session
-            base_auth = f"brd-customer-{self.proxy_api.username}-zone-{self.proxy_api.zone}-country-in-session-{session_id}"
-            proxy_auth = f"{base_auth}:{self.proxy_api.password}"
-            
-            proxy = f'http://{proxy_auth}@{self.proxy_api.proxy_host}:{self.proxy_api.proxy_port}'
-            
-            opener = urllib.request.build_opener(
-                urllib.request.ProxyHandler({'https': proxy, 'http': proxy})
-            )
-            
-            response = opener.open('https://httpbin.org/ip')
-            result = response.read().decode()
-            ip_data = json.loads(result)
-            
-            assigned_ip = ip_data.get('origin', '').split(',')[0].strip()
-            
-            if assigned_ip:
-                if excluded_ips and assigned_ip in excluded_ips:
-                    logger.warning(f"[IP] IP {assigned_ip} already in use, retrying...")
-                    return None
+        """Get unique IP from Bright Data proxy with retry logic and circuit breaker"""
+        import urllib.request
+        import urllib.error
+        import json
+        
+        # Check circuit breaker
+        if self.circuit_breaker_active:
+            if datetime.now() < self.circuit_breaker_reset_time:
+                remaining = (self.circuit_breaker_reset_time - datetime.now()).seconds
+                logger.warning(f"[CIRCUIT_BREAKER] Proxy service paused, {remaining}s remaining")
+                return None
+            else:
+                # Reset circuit breaker
+                logger.info(f"[CIRCUIT_BREAKER] Resetting after pause")
+                self.circuit_breaker_active = False
+                self.consecutive_503_errors = 0
+        
+        # Retry logic with exponential backoff
+        for attempt in range(PROXY_MAX_RETRIES):
+            try:
+                # Generate unique session ID
+                session_id = ''.join(random.choices(string.ascii_lowercase + string.digits, k=10))
                 
-                logger.info(f"[IP] Assigned IP: {assigned_ip}")
-                return (assigned_ip, self.proxy_api.proxy_port)
-            
-            return None
-            
-        except Exception as e:
-            logger.error(f"[IP] Error getting proxy IP: {e}")
-            return None
+                # Create proxy auth with session
+                base_auth = f"brd-customer-{self.proxy_api.username}-zone-{self.proxy_api.zone}-country-in-session-{session_id}"
+                proxy_auth = f"{base_auth}:{self.proxy_api.password}"
+                
+                proxy = f'http://{proxy_auth}@{self.proxy_api.proxy_host}:{self.proxy_api.proxy_port}'
+                
+                opener = urllib.request.build_opener(
+                    urllib.request.ProxyHandler({'https': proxy, 'http': proxy})
+                )
+                
+                response = opener.open('https://httpbin.org/ip', timeout=10)
+                result = response.read().decode()
+                ip_data = json.loads(result)
+                
+                assigned_ip = ip_data.get('origin', '').split(',')[0].strip()
+                
+                if assigned_ip:
+                    if excluded_ips and assigned_ip in excluded_ips:
+                        logger.warning(f"[IP] IP {assigned_ip} already in use, retrying...")
+                        return None
+                    
+                    # Success - reset circuit breaker counter
+                    self.consecutive_503_errors = 0
+                    logger.info(f"[IP] Assigned IP: {assigned_ip}")
+                    return (assigned_ip, self.proxy_api.proxy_port)
+                
+                return None
+                
+            except urllib.error.HTTPError as e:
+                if e.code == 503:
+                    self.consecutive_503_errors += 1
+                    logger.error(f"[IP] HTTP 503 error (attempt {attempt + 1}/{PROXY_MAX_RETRIES}, consecutive: {self.consecutive_503_errors})")
+                    
+                    # Check if circuit breaker should trip
+                    if self.consecutive_503_errors >= PROXY_503_CIRCUIT_BREAKER_THRESHOLD:
+                        self.circuit_breaker_active = True
+                        self.circuit_breaker_reset_time = datetime.now() + timedelta(seconds=PROXY_503_PAUSE_DURATION)
+                        logger.error(f"[CIRCUIT_BREAKER] 🚫 Proxy service unavailable after {self.consecutive_503_errors} consecutive 503s")
+                        logger.error(f"[CIRCUIT_BREAKER] Pausing proxy requests for {PROXY_503_PAUSE_DURATION}s until {self.circuit_breaker_reset_time.strftime('%H:%M:%S')}")
+                        return None
+                    
+                    # Exponential backoff
+                    if attempt < PROXY_MAX_RETRIES - 1:
+                        wait_time = PROXY_RETRY_DELAY ** (attempt + 1)
+                        logger.warning(f"[IP] Retrying in {wait_time}s...")
+                        await asyncio.sleep(wait_time)
+                else:
+                    logger.error(f"[IP] HTTP Error {e.code}: {e}")
+                    return None
+                    
+            except Exception as e:
+                logger.error(f"[IP] Error getting proxy IP (attempt {attempt + 1}/{PROXY_MAX_RETRIES}): {e}")
+                if attempt < PROXY_MAX_RETRIES - 1:
+                    wait_time = PROXY_RETRY_DELAY ** (attempt + 1)
+                    await asyncio.sleep(wait_time)
+        
+        # All retries failed
+        logger.error(f"[IP] Failed to get proxy IP after {PROXY_MAX_RETRIES} attempts")
+        return None
     
     async def launch_new_instance(self) -> bool:
         """Launch a new voting instance"""

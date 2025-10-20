@@ -196,16 +196,10 @@ def start_monitoring():
                     
                     # Emit instance updates
                     try:
-                        if voter_system and hasattr(voter_system, 'active_instances'):
+                        if voter_system:
                             instances = []
                             for ip, instance in voter_system.active_instances.items():
-                                # Get time until next vote
-                                time_info = instance.get_time_until_next_vote() if hasattr(instance, 'get_time_until_next_vote') else {
-                                    'seconds_remaining': 0,
-                                    'next_vote_time': None,
-                                    'status': 'unknown'
-                                }
-                                
+                                time_info = instance.get_time_until_next_vote()
                                 instances.append({
                                     'instance_id': getattr(instance, 'instance_id', None),
                                     'ip': ip,
@@ -225,33 +219,35 @@ def start_monitoring():
                     except Exception as e:
                         logger.error(f"Error emitting instances update: {e}")
                     
-                    # Check for ready instances
-                    try:
-                        # CRITICAL: Check if global hourly limit is active before launching
-                        if voter_system and voter_system.global_hourly_limit:
-                            logger.info(f"⏰ Global hourly limit active - skipping instance launch")
-                            await asyncio.sleep(10)
-                            continue
+                    # Check for ready instances (with reduced frequency)
+                    current_time = time.time()
+                    if current_time - last_scan_time >= SESSION_SCAN_INTERVAL:
+                        last_scan_time = current_time
                         
-                        ready_instances = await check_ready_instances()
-                        
-                        if ready_instances:
-                            logger.info(f"🔍 Found {len(ready_instances)} ready instances")
+                        try:
+                            # CRITICAL: Check if global hourly limit is active before launching
+                            if voter_system and voter_system.global_hourly_limit:
+                                logger.debug(f"⏰ Global hourly limit active - skipping instance launch")
+                            else:
+                                ready_instances = await check_ready_instances()
+                                
+                                if ready_instances:
+                                    logger.info(f"🔍 Found {len(ready_instances)} ready instances")
+                                    
+                                    # Try to launch first ready instance that's not already running
+                                    launched = False
+                                    for instance_info in ready_instances:
+                                        success = await launch_instance_from_session(instance_info)
+                                        if success:
+                                            launched = True
+                                            break
+                                    
+                                    # Wait a bit after launching to let it stabilize
+                                    if launched:
+                                        await asyncio.sleep(5)
                             
-                            # Try to launch first ready instance that's not already running
-                            launched = False
-                            for instance_info in ready_instances:
-                                success = await launch_instance_from_session(instance_info)
-                                if success:
-                                    launched = True
-                                    break
-                            
-                            # Wait a bit after launching to let it stabilize
-                            if launched:
-                                await asyncio.sleep(5)
-                        
-                    except Exception as e:
-                        logger.error(f"❌ Error in monitoring loop: {e}")
+                        except Exception as e:
+                            logger.error(f"❌ Error in monitoring loop: {e}")
                     
                     # Wait before next check
                     await asyncio.sleep(10)  # Check every 10 seconds
@@ -926,7 +922,16 @@ async def check_ready_instances():
             logger.info("📋 No saved sessions found")
             return ready_instances
         
-        logger.info(f"🔍 Scanning {len(session_folders)} saved sessions...")
+        logger.debug(f"🔍 Scanning {len(session_folders)} saved sessions...")
+        
+        # Get active instance IDs to filter them out
+        active_instance_ids = set()
+        if voter_system and hasattr(voter_system, 'active_instances'):
+            active_instance_ids = set(
+                getattr(instance, 'instance_id', None) 
+                for instance in voter_system.active_instances.values() 
+                if hasattr(instance, 'instance_id')
+            )
         
         # Read last vote times from voting_logs.csv
         instance_last_vote = {}
@@ -964,6 +969,11 @@ async def check_ready_instances():
                 instance_id = int(folder.split('_')[1])
                 instance_path = os.path.join(session_dir, folder)
                 
+                # Skip if instance is already active
+                if instance_id in active_instance_ids:
+                    logger.debug(f"⏭️ Instance #{instance_id}: Already active, skipping")
+                    continue
+                
                 # Check if session files exist
                 session_info_path = os.path.join(instance_path, "session_info.json")
                 storage_state_path = os.path.join(instance_path, "storage_state.json")
@@ -988,7 +998,7 @@ async def check_ready_instances():
                     else:
                         remaining = 31 - time_since_vote
                         cooldown_count += 1
-                        logger.info(f"⏰ Instance #{instance_id}: {int(remaining)} minutes remaining in cooldown")
+                        logger.debug(f"⏰ Instance #{instance_id}: {int(remaining)} minutes remaining in cooldown")
                 else:
                     # No voting history, ready to launch
                     ready_instances.append({
