@@ -16,7 +16,7 @@ from playwright.async_api import async_playwright
 from vote_logger import VoteLogger
 from config import (
     ENABLE_RESOURCE_BLOCKING, BLOCK_IMAGES, BLOCK_STYLESHEETS, 
-    BLOCK_FONTS, BLOCK_TRACKING
+    BLOCK_FONTS, BLOCK_TRACKING, BROWSER_LAUNCH_DELAY, MAX_CONCURRENT_BROWSER_LAUNCHES
 )
 
 logger = logging.getLogger(__name__)
@@ -221,6 +221,23 @@ class VoterInstance:
                     logger.info(f"[INIT] Instance #{self.instance_id} in cooldown: {remaining_minutes}m remaining")
                     return False
             
+            # Acquire semaphore to ensure sequential browser launch
+            if self.voter_manager and hasattr(self.voter_manager, 'browser_launch_semaphore'):
+                async with self.voter_manager.browser_launch_semaphore:
+                    logger.info(f"[INIT] Instance #{self.instance_id} acquired browser launch lock")
+                    return await self._initialize_browser(use_session)
+            else:
+                # Fallback if no voter_manager
+                return await self._initialize_browser(use_session)
+            
+        except Exception as e:
+            logger.error(f"[INIT] Instance #{self.instance_id} initialization failed: {e}")
+            self.status = "Error"
+            return False
+    
+    async def _initialize_browser(self, use_session=False):
+        """Internal method to initialize browser (called within semaphore)"""
+        try:
             # Start Playwright
             self.playwright = await async_playwright().start()
             
@@ -285,6 +302,25 @@ class VoterInstance:
         try:
             logger.info(f"[INIT] Instance #{self.instance_id} initializing with saved session...")
             
+            # Acquire semaphore to ensure sequential browser launch
+            if self.voter_manager and hasattr(self.voter_manager, 'browser_launch_semaphore'):
+                async with self.voter_manager.browser_launch_semaphore:
+                    logger.info(f"[INIT] Instance #{self.instance_id} acquired browser launch lock")
+                    return await self._initialize_browser_with_session(storage_state_path)
+            else:
+                # Fallback if no voter_manager
+                return await self._initialize_browser_with_session(storage_state_path)
+            
+        except Exception as e:
+            logger.error(f"[INIT] Instance #{self.instance_id} initialization failed: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            self.status = "Error"
+            return False
+    
+    async def _initialize_browser_with_session(self, storage_state_path: str):
+        """Internal method to initialize browser with session (called within semaphore)"""
+        try:
             # Start Playwright
             self.playwright = await async_playwright().start()
             
@@ -877,6 +913,22 @@ class VoterInstance:
                 # Check if paused
                 await self.pause_event.wait()
                 
+                # Re-initialize browser if it was closed (e.g., after hourly limit)
+                if not self.browser or not self.page:
+                    logger.info(f"[CYCLE] Instance #{self.instance_id} browser not active, re-initializing...")
+                    
+                    # Check if we have a saved session to restore
+                    storage_state_path = os.path.join(self.session_dir, 'storage_state.json')
+                    if os.path.exists(storage_state_path):
+                        init_success = await self.initialize_with_saved_session(storage_state_path)
+                    else:
+                        init_success = await self.initialize(skip_cooldown_check=True)
+                    
+                    if not init_success:
+                        logger.error(f"[CYCLE] Instance #{self.instance_id} browser re-initialization failed, retrying...")
+                        await asyncio.sleep(30)
+                        continue
+                
                 # Navigate to voting page
                 if not await self.navigate_to_voting_page():
                     logger.warning(f"[CYCLE] Instance #{self.instance_id} navigation failed, retrying...")
@@ -1052,6 +1104,11 @@ class MultiInstanceVoter:
         # Browser monitoring
         self.browser_monitoring_task = None
         self.browser_monitoring_active = False
+        
+        # Sequential browser launch control (prevents memory overload on limited resources)
+        self.browser_launch_semaphore = asyncio.Semaphore(MAX_CONCURRENT_BROWSER_LAUNCHES)
+        self.browser_launch_delay = BROWSER_LAUNCH_DELAY  # Seconds to wait between browser launches
+        self.sequential_resume_active = False
     
     async def get_proxy_ip(self, excluded_ips: Set[str] = None) -> Optional[tuple]:
         """Get unique IP from Bright Data proxy"""
@@ -1283,23 +1340,42 @@ class MultiInstanceVoter:
                     current_time = datetime.now()  # Server is IST
                     
                     if current_time >= reactivation_dt:
-                        logger.info(f"[HOURLY_LIMIT] ✅ Hourly limit expired - Resuming instances")
+                        logger.info(f"[HOURLY_LIMIT] ✅ Hourly limit expired - Resuming instances SEQUENTIALLY")
                         
                         # Clear global limit
                         self.global_hourly_limit = False
                         self.global_reactivation_time = None
                         
-                        # Resume all paused instances
+                        # Resume instances SEQUENTIALLY to prevent memory overload
+                        self.sequential_resume_active = True
                         resumed_count = 0
-                        for ip, instance in self.active_instances.items():
-                            if instance.is_paused and "Hourly Limit" in instance.status:
+                        
+                        # Collect instances to resume
+                        instances_to_resume = [
+                            instance for ip, instance in self.active_instances.items()
+                            if instance.is_paused and "Hourly Limit" in instance.status
+                        ]
+                        
+                        logger.info(f"[HOURLY_LIMIT] Found {len(instances_to_resume)} instances to resume")
+                        
+                        # Resume instances one by one with delay
+                        for instance in instances_to_resume:
+                            try:
                                 instance.is_paused = False
                                 instance.pause_event.set()
-                                instance.status = "▶️ Resumed"
+                                instance.status = "▶️ Resumed - Initializing"
                                 resumed_count += 1
-                                logger.info(f"[HOURLY_LIMIT] Resumed instance #{instance.instance_id}")
+                                logger.info(f"[HOURLY_LIMIT] Resumed instance #{instance.instance_id} ({resumed_count}/{len(instances_to_resume)})")
+                                
+                                # Wait before resuming next instance to prevent memory spike
+                                if resumed_count < len(instances_to_resume):
+                                    logger.info(f"[HOURLY_LIMIT] Waiting {self.browser_launch_delay}s before next resume...")
+                                    await asyncio.sleep(self.browser_launch_delay)
+                            except Exception as e:
+                                logger.error(f"[HOURLY_LIMIT] Error resuming instance #{instance.instance_id}: {e}")
                         
-                        logger.info(f"[HOURLY_LIMIT] Resumed {resumed_count} instances")
+                        self.sequential_resume_active = False
+                        logger.info(f"[HOURLY_LIMIT] ✅ Sequential resume completed: {resumed_count} instances")
                         break
                     else:
                         # Log remaining time

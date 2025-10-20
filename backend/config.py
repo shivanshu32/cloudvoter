@@ -83,6 +83,10 @@ BROWSER_PAUSED_TIMEOUT = 5
 BROWSER_ERROR_TIMEOUT = 2
 MONITORING_CHECK_INTERVAL = 60
 
+# Sequential browser launch configuration (prevents memory overload)
+BROWSER_LAUNCH_DELAY = 5  # Seconds to wait between browser launches
+MAX_CONCURRENT_BROWSER_LAUNCHES = 1  # Maximum number of browsers that can launch simultaneously
+
 # Logging configuration
 LOG_LEVEL = "INFO"
 LOG_FORMAT = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
