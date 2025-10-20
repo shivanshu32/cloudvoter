@@ -818,6 +818,98 @@ class VoterInstance:
                     except Exception as e:
                         logger.debug(f"[CHECK] Error checking button visibility: {e}")
                     
+                    # RETRY LOGIC: If button still visible, popup may have reappeared - try again
+                    if button_still_visible and click_attempts < 3:
+                        logger.info(f"[RETRY] Button still visible - attempting to clear popup and click again (attempt {click_attempts + 1}/3)")
+                        
+                        # Clear popups again
+                        logger.info(f"[POPUP] Instance #{self.instance_id} clearing popups again...")
+                        try:
+                            await asyncio.wait_for(self.clear_popups_enhanced(), timeout=3.0)
+                        except asyncio.TimeoutError:
+                            logger.warning(f"[RETRY] Popup clearing timeout - proceeding anyway")
+                        except Exception as e:
+                            logger.warning(f"[RETRY] Popup clearing failed: {e} - proceeding anyway")
+                        logger.info(f"[POPUP] Instance #{self.instance_id} popup clearing complete")
+                        
+                        # Wait a bit for popup to clear
+                        await asyncio.sleep(2)
+                        
+                        # Try clicking vote button again
+                        click_attempts += 1
+                        retry_clicked = False
+                        for selector in vote_selectors:
+                            try:
+                                button = await self.page.query_selector(selector)
+                                if button and await button.is_visible():
+                                    await button.click()
+                                    logger.info(f"[RETRY] Instance #{self.instance_id} clicked vote button again with selector: {selector}")
+                                    retry_clicked = True
+                                    break
+                            except:
+                                continue
+                        
+                        if retry_clicked:
+                            # Wait for response
+                            await asyncio.sleep(3)
+                            
+                            # Check vote count again
+                            retry_final_count = await self.get_vote_count()
+                            if retry_final_count is not None:
+                                logger.info(f"[RETRY] Final vote count after retry: {retry_final_count}")
+                                
+                                # Check if vote succeeded this time
+                                if initial_count is not None and retry_final_count > initial_count:
+                                    count_increase = retry_final_count - initial_count
+                                    logger.info(f"[RETRY_SUCCESS] ✅ Vote successful on retry: {initial_count} -> {retry_final_count} (+{count_increase})")
+                                    
+                                    current_time = datetime.now()
+                                    self.last_vote_time = current_time
+                                    self.last_successful_vote = current_time
+                                    self.last_attempted_vote = current_time
+                                    self.last_failure_reason = None
+                                    self.last_failure_type = None
+                                    self.vote_count += 1
+                                    
+                                    # Log successful vote
+                                    self.vote_logger.log_vote_attempt(
+                                        instance_id=self.instance_id,
+                                        instance_name=f"Instance_{self.instance_id}",
+                                        time_of_click=click_time,
+                                        status="success",
+                                        voting_url=self.target_url,
+                                        cooldown_message="",
+                                        failure_type="",
+                                        failure_reason=f"Vote successful on retry (attempt {click_attempts})",
+                                        initial_vote_count=initial_count,
+                                        final_vote_count=retry_final_count,
+                                        proxy_ip=self.proxy_ip,
+                                        session_id=self.session_id or "",
+                                        click_attempts=click_attempts,
+                                        error_message="",
+                                        browser_closed=True
+                                    )
+                                    
+                                    await self.save_session_data()
+                                    await self.close_browser()
+                                    return True
+                                else:
+                                    logger.warning(f"[RETRY] Vote still failed after retry - count did not increase")
+                                    # Update final_count for further processing
+                                    final_count = retry_final_count
+                                    # Re-check if button is still visible
+                                    button_still_visible = False
+                                    try:
+                                        for selector in vote_selectors:
+                                            button = await self.page.query_selector(selector)
+                                            if button and await button.is_visible():
+                                                button_still_visible = True
+                                                break
+                                    except:
+                                        pass
+                        else:
+                            logger.warning(f"[RETRY] Could not find vote button on retry")
+                    
                     # Wait additional time for error message to appear (page might still be loading)
                     logger.info(f"[WAIT] Waiting for page to fully load and display error message...")
                     await asyncio.sleep(5)
