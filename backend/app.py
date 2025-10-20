@@ -28,6 +28,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Suppress Flask HTTP access logs (GET /api/instances, GET /api/statistics, etc.)
+# These logs clutter the UI without providing useful information
+log = logging.getLogger('werkzeug')
+log.setLevel(logging.ERROR)  # Only show errors, not INFO level HTTP requests
+
 # Initialize Flask app
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'cloudvoter-secret-key-change-in-production')

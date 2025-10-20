@@ -18,7 +18,8 @@ from vote_logger import VoteLogger
 from config import (
     ENABLE_RESOURCE_BLOCKING, BLOCK_IMAGES, BLOCK_STYLESHEETS, 
     BLOCK_FONTS, BLOCK_TRACKING, BROWSER_LAUNCH_DELAY, MAX_CONCURRENT_BROWSER_LAUNCHES,
-    FAILURE_PATTERNS, RETRY_DELAY_TECHNICAL, RETRY_DELAY_COOLDOWN
+    FAILURE_PATTERNS, RETRY_DELAY_TECHNICAL, RETRY_DELAY_COOLDOWN,
+    GLOBAL_HOURLY_LIMIT_PATTERNS, INSTANCE_COOLDOWN_PATTERNS
 )
 
 logger = logging.getLogger(__name__)
@@ -803,7 +804,16 @@ class VoterInstance:
                         self.last_failure_reason = cooldown_message
                         self.last_failure_type = "ip_cooldown"  # IP cooldown/hourly limit
                         
-                        # Log hourly limit to CSV with comprehensive data
+                        # Check if this is a GLOBAL hourly limit or INSTANCE-SPECIFIC cooldown
+                        is_global_limit = any(pattern in page_content.lower() for pattern in GLOBAL_HOURLY_LIMIT_PATTERNS)
+                        is_instance_cooldown = any(pattern in page_content.lower() for pattern in INSTANCE_COOLDOWN_PATTERNS)
+                        
+                        if is_global_limit:
+                            logger.warning(f"[GLOBAL_LIMIT] Instance #{self.instance_id} detected GLOBAL hourly limit - will pause ALL instances")
+                        elif is_instance_cooldown:
+                            logger.info(f"[INSTANCE_COOLDOWN] Instance #{self.instance_id} in instance-specific cooldown (30 min) - only this instance affected")
+                        
+                        # Log cooldown to CSV with comprehensive data
                         self.vote_logger.log_vote_attempt(
                             instance_id=self.instance_id,
                             instance_name=f"Instance_{self.instance_id}",
@@ -812,7 +822,7 @@ class VoterInstance:
                             voting_url=self.target_url,
                             cooldown_message=cooldown_message,
                             failure_type="ip_cooldown",
-                            failure_reason="IP in cooldown period - hourly limit reached",
+                            failure_reason="IP in cooldown period" if is_instance_cooldown else "Global hourly limit reached",
                             initial_vote_count=initial_count,
                             final_vote_count=final_count,
                             proxy_ip=self.proxy_ip,
@@ -823,12 +833,15 @@ class VoterInstance:
                         )
                         
                         # Close browser before cooldown
-                        logger.info(f"[CLEANUP] Closing browser after hourly limit detection")
+                        logger.info(f"[CLEANUP] Closing browser after cooldown detection")
                         await self.close_browser()
                         
-                        # Trigger global hourly limit handling
-                        if self.voter_manager:
+                        # ONLY trigger global hourly limit handling for GLOBAL patterns
+                        if is_global_limit and self.voter_manager:
+                            logger.warning(f"[GLOBAL_LIMIT] Triggering global hourly limit handler")
                             asyncio.create_task(self.voter_manager.handle_hourly_limit())
+                        else:
+                            logger.info(f"[INSTANCE_COOLDOWN] Instance #{self.instance_id} will wait individually, other instances continue")
                     else:
                         logger.error(f"[FAILED] Vote failed - count unchanged and no error message")
                         
@@ -936,16 +949,25 @@ class VoterInstance:
                     self.last_failure_reason = cooldown_message
                     self.last_failure_type = "ip_cooldown"  # IP cooldown (fallback)
                     
-                    # Log hourly limit to CSV with comprehensive data
+                    # Check if this is a GLOBAL hourly limit or INSTANCE-SPECIFIC cooldown
+                    is_global_limit = any(pattern in page_content.lower() for pattern in GLOBAL_HOURLY_LIMIT_PATTERNS)
+                    is_instance_cooldown = any(pattern in page_content.lower() for pattern in INSTANCE_COOLDOWN_PATTERNS)
+                    
+                    if is_global_limit:
+                        logger.warning(f"[GLOBAL_LIMIT] Instance #{self.instance_id} detected GLOBAL hourly limit (fallback) - will pause ALL instances")
+                    elif is_instance_cooldown:
+                        logger.info(f"[INSTANCE_COOLDOWN] Instance #{self.instance_id} in instance-specific cooldown (fallback) - only this instance affected")
+                    
+                    # Log cooldown to CSV with comprehensive data
                     self.vote_logger.log_vote_attempt(
                         instance_id=self.instance_id,
                         instance_name=f"Instance_{self.instance_id}",
                         time_of_click=click_time,
                         status="failed",
                         voting_url=self.target_url,
-                        cooldown_message="Hourly voting limit reached (fallback detection)",
+                        cooldown_message="Cooldown detected (fallback detection)",
                         failure_type="ip_cooldown",
-                        failure_reason="IP in cooldown period - hourly limit reached",
+                        failure_reason="IP in cooldown period" if is_instance_cooldown else "Global hourly limit reached",
                         initial_vote_count=None,
                         final_vote_count=None,
                         proxy_ip=self.proxy_ip,
@@ -956,12 +978,15 @@ class VoterInstance:
                     )
                     
                     # Close browser before cooldown
-                    logger.info(f"[CLEANUP] Closing browser after hourly limit detection (fallback)")
+                    logger.info(f"[CLEANUP] Closing browser after cooldown detection (fallback)")
                     await self.close_browser()
                     
-                    # Trigger global hourly limit handling
-                    if self.voter_manager:
+                    # ONLY trigger global hourly limit handling for GLOBAL patterns
+                    if is_global_limit and self.voter_manager:
+                        logger.warning(f"[GLOBAL_LIMIT] Triggering global hourly limit handler (fallback)")
                         asyncio.create_task(self.voter_manager.handle_hourly_limit())
+                    else:
+                        logger.info(f"[INSTANCE_COOLDOWN] Instance #{self.instance_id} will wait individually (fallback), other instances continue")
                     
                     return False
                 

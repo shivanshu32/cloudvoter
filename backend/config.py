@@ -75,6 +75,21 @@ FAILURE_PATTERNS = [
     "wait before voting again"
 ]
 
+# Global hourly limit patterns (these affect ALL instances, not just one)
+# Only these patterns should trigger global pause of all instances
+GLOBAL_HOURLY_LIMIT_PATTERNS = [
+    "hourly limit",
+    "someone has already voted out of this ip"
+]
+
+# Instance-specific cooldown patterns (only affect the specific instance)
+# These should NOT trigger global pause
+INSTANCE_COOLDOWN_PATTERNS = [
+    "please come back at your next voting time",  # 30-minute cooldown
+    "already voted",  # Instance-specific
+    "wait before voting again"  # Instance-specific
+]
+
 # Browser monitoring configuration
 ENABLE_BROWSER_MONITORING = True
 BROWSER_IDLE_TIMEOUT = 3
