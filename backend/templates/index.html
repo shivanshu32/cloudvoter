@@ -568,6 +568,14 @@
             }
         }
 
+        // Format seconds into MM:SS
+        function formatCountdown(seconds) {
+            if (seconds <= 0) return 'Ready to vote';
+            const minutes = Math.floor(seconds / 60);
+            const secs = seconds % 60;
+            return `⏱️ ${minutes}:${secs.toString().padStart(2, '0')}`;
+        }
+        
         // Render instances (used by both polling and Socket.IO)
         function renderInstances(instances) {
             if (!instances || instances.length === 0) {
@@ -585,8 +593,11 @@
             // Build new HTML
             const newHTML = sortedInstances.map(instance => {
                 const instanceId = String(instance.instance_id);
+                const secondsRemaining = instance.seconds_remaining || 0;
+                const countdownText = formatCountdown(secondsRemaining);
+                
                 return `
-                <div class="mb-3 p-3 bg-gray-50 rounded-lg border border-gray-200" data-instance-id="${instanceId}">
+                <div class="mb-3 p-3 bg-gray-50 rounded-lg border border-gray-200" data-instance-id="${instanceId}" data-seconds="${secondsRemaining}">
                     <div class="flex items-center justify-between mb-2">
                         <span class="font-medium text-gray-900">Instance #${instance.instance_id}</span>
                         <span class="status-badge ${getStatusColor(instance.status)}">
@@ -597,7 +608,21 @@
                         <div>IP: ${instance.ip || 'N/A'}</div>
                         <div>Votes: ${instance.vote_count || 0}</div>
                         ${instance.is_paused ? '<div class="text-orange-600">⏸️ Paused</div>' : ''}
+                        <div class="font-semibold ${secondsRemaining > 0 ? 'text-blue-600' : 'text-green-600'}" data-countdown="${instanceId}">
+                            ${countdownText}
+                        </div>
                     </div>
+                    <div class="grid grid-cols-2 gap-2 text-xs text-gray-500 mt-2 pt-2 border-t border-gray-200">
+                        <div>✅ Last Success: ${formatLastVote(instance.last_successful_vote)}</div>
+                        <div>🎯 Last Attempt: ${formatLastVote(instance.last_attempted_vote)}</div>
+                    </div>
+                    ${instance.last_failure_reason ? `
+                    <div class="mt-2 pt-2 border-t border-red-200">
+                        <div class="text-xs text-red-600 font-medium">
+                            ❌ Last Failure: ${instance.last_failure_reason}
+                        </div>
+                    </div>
+                    ` : ''}
                 </div>
                 `;
             }).join('');
@@ -652,6 +677,32 @@
             }
         }
 
+        // Update countdown timers every second
+        function updateCountdowns() {
+            const instanceCards = document.querySelectorAll('[data-instance-id]');
+            instanceCards.forEach(card => {
+                const instanceId = card.getAttribute('data-instance-id');
+                const countdownElement = card.querySelector(`[data-countdown="${instanceId}"]`);
+                
+                if (countdownElement) {
+                    let seconds = parseInt(card.getAttribute('data-seconds') || '0');
+                    
+                    if (seconds > 0) {
+                        seconds--;
+                        card.setAttribute('data-seconds', seconds);
+                        countdownElement.textContent = formatCountdown(seconds);
+                        
+                        // Update color based on remaining time
+                        if (seconds > 0) {
+                            countdownElement.className = 'font-semibold text-blue-600';
+                        } else {
+                            countdownElement.className = 'font-semibold text-green-600';
+                        }
+                    }
+                }
+            });
+        }
+        
         // Start polling
         function startPolling() {
             updateStatistics();
@@ -659,6 +710,7 @@
             
             setInterval(updateStatistics, 5000);
             setInterval(updateInstances, 5000);
+            setInterval(updateCountdowns, 1000);  // Update countdown every second
         }
 
         // Tab switching

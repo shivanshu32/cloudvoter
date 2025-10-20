@@ -44,8 +44,11 @@ event_loop = None
 loop_thread = None
 login_browsers = {}  # Store active login browsers
 
-# Vote logger
-vote_logger = VoteLogger()
+# Vote logger - use absolute path to match VoterInstance
+project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+vote_logger_path = os.path.join(project_root, "voting_logs.csv")
+vote_logger = VoteLogger(log_file=vote_logger_path)
+logger.info(f"📊 Vote logger initialized: {vote_logger_path}")
 
 class WebSocketLogHandler(logging.Handler):
     """Custom log handler to send logs to WebSocket clients"""
@@ -191,13 +194,27 @@ def start_monitoring():
                         if voter_system and hasattr(voter_system, 'active_instances'):
                             instances = []
                             for ip, instance in voter_system.active_instances.items():
+                                # Get time until next vote
+                                time_info = instance.get_time_until_next_vote() if hasattr(instance, 'get_time_until_next_vote') else {
+                                    'seconds_remaining': 0,
+                                    'next_vote_time': None,
+                                    'status': 'unknown'
+                                }
+                                
                                 instances.append({
                                     'instance_id': getattr(instance, 'instance_id', None),
                                     'ip': ip,
                                     'status': getattr(instance, 'status', 'Unknown'),
                                     'is_paused': getattr(instance, 'is_paused', False),
                                     'waiting_for_login': getattr(instance, 'waiting_for_login', False),
-                                    'vote_count': getattr(instance, 'vote_count', 0)
+                                    'vote_count': getattr(instance, 'vote_count', 0),
+                                    'seconds_remaining': time_info['seconds_remaining'],
+                                    'next_vote_time': time_info['next_vote_time'],
+                                    'last_vote_time': getattr(instance, 'last_vote_time', None).isoformat() if getattr(instance, 'last_vote_time', None) else None,
+                                    'last_successful_vote': getattr(instance, 'last_successful_vote', None).isoformat() if getattr(instance, 'last_successful_vote', None) else None,
+                                    'last_attempted_vote': getattr(instance, 'last_attempted_vote', None).isoformat() if getattr(instance, 'last_attempted_vote', None) else None,
+                                    'last_failure_reason': getattr(instance, 'last_failure_reason', None),
+                                    'last_failure_type': getattr(instance, 'last_failure_type', None)
                                 })
                             socketio.emit('instances_update', {'instances': instances})
                     except Exception as e:
@@ -336,6 +353,13 @@ def get_instances():
                 if instance_id is None:
                     logger.error(f"[API] Instance at IP {ip} has no instance_id! Type: {type(instance)}, Attrs: {dir(instance)}")
                 
+                # Get time until next vote
+                time_info = instance.get_time_until_next_vote() if hasattr(instance, 'get_time_until_next_vote') else {
+                    'seconds_remaining': 0,
+                    'next_vote_time': None,
+                    'status': 'unknown'
+                }
+                
                 instances.append({
                     'instance_id': instance_id if instance_id is not None else 'Unknown',
                     'ip': ip,
@@ -343,7 +367,14 @@ def get_instances():
                     'is_paused': getattr(instance, 'is_paused', False),
                     'waiting_for_login': getattr(instance, 'waiting_for_login', False),
                     'session_id': getattr(instance, 'session_id', None),
-                    'vote_count': getattr(instance, 'vote_count', 0)
+                    'vote_count': getattr(instance, 'vote_count', 0),
+                    'seconds_remaining': time_info['seconds_remaining'],
+                    'next_vote_time': time_info['next_vote_time'],
+                    'last_vote_time': getattr(instance, 'last_vote_time', None).isoformat() if getattr(instance, 'last_vote_time', None) else None,
+                    'last_successful_vote': getattr(instance, 'last_successful_vote', None).isoformat() if getattr(instance, 'last_successful_vote', None) else None,
+                    'last_attempted_vote': getattr(instance, 'last_attempted_vote', None).isoformat() if getattr(instance, 'last_attempted_vote', None) else None,
+                    'last_failure_reason': getattr(instance, 'last_failure_reason', None),
+                    'last_failure_type': getattr(instance, 'last_failure_type', None)
                 })
         
         return jsonify({

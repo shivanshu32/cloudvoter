@@ -8,6 +8,7 @@ import json
 import logging
 import os
 import random
+import re
 import string
 import time
 from datetime import datetime, timedelta
@@ -16,7 +17,8 @@ from playwright.async_api import async_playwright
 from vote_logger import VoteLogger
 from config import (
     ENABLE_RESOURCE_BLOCKING, BLOCK_IMAGES, BLOCK_STYLESHEETS, 
-    BLOCK_FONTS, BLOCK_TRACKING, BROWSER_LAUNCH_DELAY, MAX_CONCURRENT_BROWSER_LAUNCHES
+    BLOCK_FONTS, BLOCK_TRACKING, BROWSER_LAUNCH_DELAY, MAX_CONCURRENT_BROWSER_LAUNCHES,
+    FAILURE_PATTERNS, RETRY_DELAY_TECHNICAL, RETRY_DELAY_COOLDOWN
 )
 
 logger = logging.getLogger(__name__)
@@ -91,6 +93,10 @@ class VoterInstance:
         
         # Voting state
         self.last_vote_time = None
+        self.last_successful_vote = None  # Timestamp of last successful vote
+        self.last_attempted_vote = None   # Timestamp of last vote attempt (success or fail)
+        self.last_failure_reason = None   # Reason for last failed vote attempt
+        self.last_failure_type = None     # Type of failure: "ip_cooldown" or "technical"
         self.vote_count = 0
         self.failed_attempts = 0
         
@@ -105,6 +111,32 @@ class VoterInstance:
         self.block_stylesheets = BLOCK_STYLESHEETS
         self.block_fonts = BLOCK_FONTS
         self.block_tracking = BLOCK_TRACKING
+    
+    def get_time_until_next_vote(self) -> dict:
+        """
+        Calculate time remaining until next vote.
+        Returns dict with seconds_remaining and next_vote_time.
+        """
+        if not self.last_vote_time:
+            return {
+                'seconds_remaining': 0,
+                'next_vote_time': None,
+                'status': 'ready'
+            }
+        
+        # Calculate next vote time (31 minutes after last vote)
+        next_vote_time = self.last_vote_time + timedelta(minutes=31)
+        current_time = datetime.now()
+        
+        # Calculate seconds remaining
+        time_diff = (next_vote_time - current_time).total_seconds()
+        seconds_remaining = max(0, int(time_diff))
+        
+        return {
+            'seconds_remaining': seconds_remaining,
+            'next_vote_time': next_vote_time.isoformat(),
+            'status': 'cooldown' if seconds_remaining > 0 else 'ready'
+        }
     
     async def _handle_resource_blocking(self, route):
         """
@@ -626,6 +658,12 @@ class VoterInstance:
             
             if not button_clicked:
                 logger.error(f"[VOTE] Instance #{self.instance_id} could not find vote button")
+                
+                # Track last attempt (failed) and store reason
+                self.last_attempted_vote = datetime.now()
+                self.last_failure_reason = "Could not find vote button"
+                self.last_failure_type = "technical"  # Technical failure
+                
                 # Log failed vote attempt
                 self.vote_logger.log_vote_attempt(
                     instance_id=self.instance_id,
@@ -657,7 +695,12 @@ class VoterInstance:
                 if count_increase == 1:
                     # VERIFIED SUCCESS - Count increased by exactly 1
                     logger.info(f"[SUCCESS] ✅ Vote VERIFIED successful: {initial_count} -> {final_count} (+{count_increase})")
-                    self.last_vote_time = datetime.now()  # Server is IST
+                    current_time = datetime.now()  # Server is IST
+                    self.last_vote_time = current_time
+                    self.last_successful_vote = current_time  # Track last successful vote
+                    self.last_attempted_vote = current_time   # Track last attempt
+                    self.last_failure_reason = None          # Clear failure reason on success
+                    self.last_failure_type = None            # Clear failure type on success
                     self.vote_count += 1
                     
                     # Log successful vote to CSV with comprehensive data
@@ -698,19 +741,67 @@ class VoterInstance:
                     
                     page_content = await self.page.content()
                     cooldown_message = ""
-                    if any(pattern in page_content.lower() for pattern in ['hourly limit', 'already voted', 'cooldown']):
-                        logger.warning(f"[VOTE] Instance #{self.instance_id} hit hourly limit")
+                    
+                    # Check for failure patterns from config
+                    if any(pattern in page_content.lower() for pattern in FAILURE_PATTERNS):
+                        logger.warning(f"[VOTE] Instance #{self.instance_id} hit cooldown/limit")
                         
-                        # Extract cooldown message
+                        # Track last attempt (failed)
+                        self.last_attempted_vote = datetime.now()
+                        
+                        # Try to extract the actual message from the page
                         try:
-                            if 'hourly limit' in page_content.lower():
+                            # Look for the message in button text or alert divs
+                            if self.page:
+                                # Try to find message in common elements
+                                message_selectors = [
+                                    '.pc-image-info-box-button-btn-text',
+                                    '.pc-hiddenbutton .pc-image-info-box-button-btn-text',
+                                    '.alert', '.message', '.notification',
+                                    '[class*="message"]', '[class*="error"]'
+                                ]
+                                
+                                for selector in message_selectors:
+                                    try:
+                                        element = await self.page.query_selector(selector)
+                                        if element:
+                                            text = await element.inner_text()
+                                            if text and any(pattern in text.lower() for pattern in FAILURE_PATTERNS):
+                                                # Clean up the message
+                                                cooldown_message = text.strip()
+                                                
+                                                # Remove personalized names (e.g., "shivanshu pathak!")
+                                                # Pattern: "You have voted already [NAME]! Please come back..."
+                                                cooldown_message = re.sub(r'(voted already|already)\s+[^!]+!', r'\1!', cooldown_message, flags=re.IGNORECASE)
+                                                
+                                                # Remove extra whitespace
+                                                cooldown_message = ' '.join(cooldown_message.split())
+                                                
+                                                # Limit length
+                                                if len(cooldown_message) > 150:
+                                                    cooldown_message = cooldown_message[:150] + "..."
+                                                break
+                                    except:
+                                        continue
+                        except Exception as e:
+                            logger.debug(f"Could not extract message: {e}")
+                        
+                        # Fallback to generic messages if extraction failed
+                        if not cooldown_message:
+                            if 'please come back at your next voting time' in page_content.lower():
+                                cooldown_message = "Already voted - Please come back at next voting time"
+                            elif 'hourly limit' in page_content.lower():
                                 cooldown_message = "Hourly voting limit reached"
                             elif 'already voted' in page_content.lower():
                                 cooldown_message = "Already voted"
                             elif 'cooldown' in page_content.lower():
                                 cooldown_message = "In cooldown period"
-                        except:
-                            cooldown_message = "Hourly limit detected"
+                            else:
+                                cooldown_message = "Cooldown/limit detected"
+                        
+                        # Store failure reason and type
+                        self.last_failure_reason = cooldown_message
+                        self.last_failure_type = "ip_cooldown"  # IP cooldown/hourly limit
                         
                         # Log hourly limit to CSV with comprehensive data
                         self.vote_logger.log_vote_attempt(
@@ -740,6 +831,11 @@ class VoterInstance:
                             asyncio.create_task(self.voter_manager.handle_hourly_limit())
                     else:
                         logger.error(f"[FAILED] Vote failed - count unchanged and no error message")
+                        
+                        # Track last attempt (failed) and store reason
+                        self.last_attempted_vote = datetime.now()
+                        self.last_failure_reason = "Vote count did not increase"
+                        self.last_failure_type = "technical"  # Technical failure
                         
                         # Log failed vote with comprehensive data
                         self.vote_logger.log_vote_attempt(
@@ -799,8 +895,46 @@ class VoterInstance:
                     await self.save_session_data()
                     return True
                     
-                elif any(pattern in page_content.lower() for pattern in ['hourly limit', 'already voted', 'cooldown']):
-                    logger.warning(f"[VOTE] Instance #{self.instance_id} hit hourly limit")
+                elif any(pattern in page_content.lower() for pattern in FAILURE_PATTERNS):
+                    logger.warning(f"[VOTE] Instance #{self.instance_id} hit cooldown/limit (fallback detection)")
+                    
+                    # Track last attempt (failed)
+                    self.last_attempted_vote = datetime.now()
+                    
+                    # Try to extract actual message
+                    cooldown_message = "Cooldown/limit detected (fallback)"
+                    try:
+                        if self.page:
+                            message_selectors = [
+                                '.pc-image-info-box-button-btn-text',
+                                '.pc-hiddenbutton .pc-image-info-box-button-btn-text',
+                                '.alert', '.message', '.notification'
+                            ]
+                            for selector in message_selectors:
+                                try:
+                                    element = await self.page.query_selector(selector)
+                                    if element:
+                                        text = await element.inner_text()
+                                        if text and any(pattern in text.lower() for pattern in FAILURE_PATTERNS):
+                                            cooldown_message = text.strip()
+                                            
+                                            # Remove personalized names
+                                            cooldown_message = re.sub(r'(voted already|already)\s+[^!]+!', r'\1!', cooldown_message, flags=re.IGNORECASE)
+                                            
+                                            # Remove extra whitespace
+                                            cooldown_message = ' '.join(cooldown_message.split())
+                                            
+                                            if len(cooldown_message) > 150:
+                                                cooldown_message = cooldown_message[:150] + "..."
+                                            break
+                                except:
+                                    continue
+                    except:
+                        pass
+                    
+                    # Store failure reason and type
+                    self.last_failure_reason = cooldown_message
+                    self.last_failure_type = "ip_cooldown"  # IP cooldown (fallback)
                     
                     # Log hourly limit to CSV with comprehensive data
                     self.vote_logger.log_vote_attempt(
@@ -838,6 +972,11 @@ class VoterInstance:
         except Exception as e:
             logger.error(f"[VOTE] Instance #{self.instance_id} vote failed: {e}")
             self.failed_attempts += 1
+            
+            # Track last attempt (failed) and store reason
+            self.last_attempted_vote = datetime.now()
+            self.last_failure_reason = f"Exception: {str(e)[:100]}"
+            self.last_failure_type = "technical"  # Technical failure (exception)
             
             # Get final count if possible
             final_count = None
@@ -963,12 +1102,22 @@ class VoterInstance:
                 
                 if success:
                     self.status = "✅ Vote Successful"
-                    logger.info(f"[CYCLE] Instance #{self.instance_id} waiting 31 minutes...")
-                    await asyncio.sleep(31 * 60)  # 31 minute wait
+                    logger.info(f"[CYCLE] Instance #{self.instance_id} waiting {RETRY_DELAY_COOLDOWN} minutes...")
+                    await asyncio.sleep(RETRY_DELAY_COOLDOWN * 60)
                 else:
-                    self.status = "⏳ Cooldown"
-                    logger.info(f"[CYCLE] Instance #{self.instance_id} in cooldown, waiting...")
-                    await asyncio.sleep(31 * 60)
+                    # Determine wait time based on failure type
+                    if self.last_failure_type == "ip_cooldown":
+                        # Hourly limit / cooldown - wait full cycle
+                        wait_minutes = RETRY_DELAY_COOLDOWN
+                        self.status = f"⏳ Cooldown ({wait_minutes} min)"
+                        logger.info(f"[CYCLE] Instance #{self.instance_id} in cooldown, waiting {wait_minutes} minutes...")
+                    else:
+                        # Technical failure - retry sooner
+                        wait_minutes = RETRY_DELAY_TECHNICAL
+                        self.status = f"🔄 Retry in {wait_minutes} min"
+                        logger.info(f"[CYCLE] Instance #{self.instance_id} technical failure, retrying in {wait_minutes} minutes...")
+                    
+                    await asyncio.sleep(wait_minutes * 60)
                 
         except asyncio.CancelledError:
             logger.info(f"[CYCLE] Instance #{self.instance_id} voting cycle cancelled")
