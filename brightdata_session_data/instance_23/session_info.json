@@ -1,0 +1,25 @@
+{
+  "instance_id": 23,
+  "session_id": "f6sv919o8p",
+  "proxy_ip": "119.13.239.19",
+  "vote_count": 0,
+  "successful_votes": 0,
+  "failed_votes": 0,
+  "total_vote_attempts": 33,
+  "last_vote_time": "2025-10-20T15:34:46.872789",
+  "is_paused": false,
+  "custom_wait_minutes": 30,
+  "saved_at": "2025-10-20T15:35:00.572403",
+  "target_url": "https://www.cutebabyvote.com/october-2025/?contest=photo-detail&photo_id=463146",
+  "current_url_index": 0,
+  "url_hourly_limits": {
+    "https://www.cutebabyvote.com/october-2025/?contest=photo-detail&photo_id=463146": {
+      "reached": false,
+      "reactivation_time": null
+    }
+  },
+  "url_login_required": {
+    "https://www.cutebabyvote.com/october-2025/?contest=photo-detail&photo_id=463146": false
+  },
+  "session_version": "1.0"
+}
