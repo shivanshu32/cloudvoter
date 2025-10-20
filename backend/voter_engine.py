@@ -1158,7 +1158,22 @@ class VoterInstance:
             logger.info(f"[CYCLE] Instance #{self.instance_id} starting voting cycle")
             
             while True:
-                # Check if paused
+                # Check if paused, but also check if cooldown has expired
+                if self.is_paused:
+                    # Check if this instance should be auto-unpaused
+                    time_info = self.get_time_until_next_vote()
+                    seconds_remaining = time_info.get('seconds_remaining', 0)
+                    
+                    # If cooldown expired and instance is paused (but not waiting for login)
+                    if seconds_remaining == 0 and not self.waiting_for_login:
+                        # Check if this is NOT a global hourly limit pause
+                        if not (self.voter_manager and self.voter_manager.global_hourly_limit):
+                            logger.info(f"[AUTO-UNPAUSE] Instance #{self.instance_id} cooldown expired - auto-unpausing")
+                            self.is_paused = False
+                            self.pause_event.set()
+                            self.status = "▶️ Resumed - Ready to Vote"
+                
+                # Wait if still paused
                 await self.pause_event.wait()
                 
                 # Re-initialize browser if it was closed (e.g., after hourly limit)
@@ -1392,6 +1407,10 @@ class MultiInstanceVoter:
         # Browser monitoring
         self.browser_monitoring_task = None
         self.browser_monitoring_active = False
+        
+        # Auto-unpause monitoring (checks for expired cooldowns)
+        self.auto_unpause_task = None
+        self.auto_unpause_active = False
         
         # Sequential browser launch control (prevents memory overload on limited resources)
         self.browser_launch_semaphore = asyncio.Semaphore(MAX_CONCURRENT_BROWSER_LAUNCHES)
@@ -1741,6 +1760,65 @@ class MultiInstanceVoter:
             logger.error(f"[HOURLY_LIMIT] Error in limit check: {e}")
             import traceback
             logger.error(traceback.format_exc())
+    
+    async def _auto_unpause_monitoring_loop(self):
+        """Periodically check for paused instances with expired cooldowns and auto-unpause them"""
+        try:
+            logger.info("[AUTO-UNPAUSE] Monitoring service started")
+            
+            while self.auto_unpause_active:
+                try:
+                    # Check all paused instances
+                    for ip, instance in list(self.active_instances.items()):
+                        if instance.is_paused and not instance.waiting_for_login:
+                            # Get time until next vote
+                            time_info = instance.get_time_until_next_vote()
+                            seconds_remaining = time_info.get('seconds_remaining', 0)
+                            
+                            # If cooldown expired and NOT in global hourly limit
+                            if seconds_remaining == 0 and not self.global_hourly_limit:
+                                logger.info(f"[AUTO-UNPAUSE] Instance #{instance.instance_id} cooldown expired - auto-unpausing")
+                                instance.is_paused = False
+                                instance.pause_event.set()
+                                instance.status = "▶️ Resumed - Ready to Vote"
+                    
+                    # Check every 30 seconds
+                    await asyncio.sleep(30)
+                    
+                except Exception as e:
+                    logger.error(f"[AUTO-UNPAUSE] Error in monitoring loop: {e}")
+                    await asyncio.sleep(30)
+            
+            logger.info("[AUTO-UNPAUSE] Monitoring service stopped")
+            
+        except asyncio.CancelledError:
+            logger.info("[AUTO-UNPAUSE] Monitoring task cancelled")
+        except Exception as e:
+            logger.error(f"[AUTO-UNPAUSE] Fatal error: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+    
+    async def start_auto_unpause_monitoring(self):
+        """Start auto-unpause monitoring service"""
+        if self.auto_unpause_active:
+            return
+        
+        self.auto_unpause_active = True
+        self.auto_unpause_task = asyncio.create_task(self._auto_unpause_monitoring_loop())
+        logger.info("[AUTO-UNPAUSE] Monitoring service initialized")
+    
+    async def stop_auto_unpause_monitoring(self):
+        """Stop auto-unpause monitoring service"""
+        self.auto_unpause_active = False
+        
+        if self.auto_unpause_task:
+            self.auto_unpause_task.cancel()
+            try:
+                await self.auto_unpause_task
+            except asyncio.CancelledError:
+                pass
+        
+        logger.info("[AUTO-UNPAUSE] Monitoring service stopped")
     
     async def start_browser_monitoring_service(self):
         """Start browser monitoring service"""

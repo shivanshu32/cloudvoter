@@ -240,6 +240,10 @@ def start_monitoring():
                 if hasattr(voter_system, 'start_browser_monitoring_service'):
                     await voter_system.start_browser_monitoring_service()
                 
+                # Start auto-unpause monitoring service
+                if hasattr(voter_system, 'start_auto_unpause_monitoring'):
+                    await voter_system.start_auto_unpause_monitoring()
+                
                 loop_count = 0
                 last_scan_time = 0  # Track last session scan time
                 while monitoring_active:
@@ -327,6 +331,10 @@ def start_monitoring():
                 # Stop browser monitoring
                 if voter_system and hasattr(voter_system, 'stop_browser_monitoring_service'):
                     await voter_system.stop_browser_monitoring_service()
+                
+                # Stop auto-unpause monitoring
+                if voter_system and hasattr(voter_system, 'stop_auto_unpause_monitoring'):
+                    await voter_system.stop_auto_unpause_monitoring()
         
         # Schedule monitoring task
         monitoring_task = asyncio.run_coroutine_threadsafe(monitoring_loop(), event_loop)
