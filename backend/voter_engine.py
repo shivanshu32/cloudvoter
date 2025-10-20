@@ -117,28 +117,80 @@ class VoterInstance:
     
     def get_time_until_next_vote(self) -> dict:
         """
-        Calculate time remaining until next vote.
+        Calculate time remaining until next vote or retry.
         Returns dict with seconds_remaining and next_vote_time.
-        """
-        if not self.last_vote_time:
-            return {
-                'seconds_remaining': 0,
-                'next_vote_time': None,
-                'status': 'ready'
-            }
         
-        # Calculate next vote time (31 minutes after last vote)
-        next_vote_time = self.last_vote_time + timedelta(minutes=31)
+        Handles both:
+        - Successful votes: 31 minute cooldown
+        - Failed votes: 5 min (technical) or 31 min (IP cooldown) retry delay
+        """
         current_time = datetime.now()
         
-        # Calculate seconds remaining
-        time_diff = (next_vote_time - current_time).total_seconds()
-        seconds_remaining = max(0, int(time_diff))
+        # Check if there's a recent failure that needs retry
+        if self.last_attempted_vote and self.last_failure_type:
+            # Determine retry delay based on failure type
+            if self.last_failure_type == "technical":
+                retry_minutes = RETRY_DELAY_TECHNICAL  # 5 minutes
+                retry_label = "retry"
+            else:  # ip_cooldown
+                retry_minutes = RETRY_DELAY_COOLDOWN  # 31 minutes
+                retry_label = "cooldown"
+            
+            # Calculate next retry time
+            next_retry_time = self.last_attempted_vote + timedelta(minutes=retry_minutes)
+            time_diff = (next_retry_time - current_time).total_seconds()
+            retry_seconds = max(0, int(time_diff))
+            
+            # If we have both successful vote and failed attempt, use whichever is later
+            if self.last_vote_time:
+                next_vote_time = self.last_vote_time + timedelta(minutes=31)
+                vote_time_diff = (next_vote_time - current_time).total_seconds()
+                vote_seconds = max(0, int(vote_time_diff))
+                
+                # Use the longer wait time
+                if retry_seconds > vote_seconds:
+                    return {
+                        'seconds_remaining': retry_seconds,
+                        'next_vote_time': next_retry_time.isoformat(),
+                        'status': f'{retry_label}_retry' if retry_seconds > 0 else 'ready',
+                        'retry_type': self.last_failure_type
+                    }
+                else:
+                    return {
+                        'seconds_remaining': vote_seconds,
+                        'next_vote_time': next_vote_time.isoformat(),
+                        'status': 'cooldown' if vote_seconds > 0 else 'ready',
+                        'retry_type': None
+                    }
+            else:
+                # Only failed attempt, no successful vote yet
+                return {
+                    'seconds_remaining': retry_seconds,
+                    'next_vote_time': next_retry_time.isoformat(),
+                    'status': f'{retry_label}_retry' if retry_seconds > 0 else 'ready',
+                    'retry_type': self.last_failure_type
+                }
         
+        # No failure, check for successful vote cooldown
+        if self.last_vote_time:
+            # Calculate next vote time (31 minutes after last vote)
+            next_vote_time = self.last_vote_time + timedelta(minutes=31)
+            time_diff = (next_vote_time - current_time).total_seconds()
+            seconds_remaining = max(0, int(time_diff))
+            
+            return {
+                'seconds_remaining': seconds_remaining,
+                'next_vote_time': next_vote_time.isoformat(),
+                'status': 'cooldown' if seconds_remaining > 0 else 'ready',
+                'retry_type': None
+            }
+        
+        # No vote history and no failures - ready to vote
         return {
-            'seconds_remaining': seconds_remaining,
-            'next_vote_time': next_vote_time.isoformat(),
-            'status': 'cooldown' if seconds_remaining > 0 else 'ready'
+            'seconds_remaining': 0,
+            'next_vote_time': None,
+            'status': 'ready',
+            'retry_type': None
         }
     
     async def _handle_resource_blocking(self, route):

@@ -107,27 +107,79 @@ def health_check():
         'monitoring_active': monitoring_active
     })
 
-@app.route('/api/config', methods=['GET', 'POST'])
+@app.route('/api/config', methods=['GET', 'POST', 'PUT'])
 def config_endpoint():
-    """Get or update configuration"""
+    """Get or update configuration with persistent storage"""
+    # Path to persistent config file
+    config_file = os.path.join(project_root, 'user_config.json')
+    
     if request.method == 'GET':
-        # Return config values with fallback to config.py defaults
+        # Load saved config from file if exists
+        saved_config = {}
+        if os.path.exists(config_file):
+            try:
+                with open(config_file, 'r') as f:
+                    saved_config = json.load(f)
+            except Exception as e:
+                logger.error(f"Error loading config file: {e}")
+        
+        # Return config values with priority: saved > environment > config.py defaults
         return jsonify({
-            'voting_url': TARGET_URL,
-            'voting_urls': TARGET_URLS,
-            'bright_data_username': os.environ.get('BRIGHT_DATA_USERNAME', BRIGHT_DATA_USERNAME),
-            'bright_data_password': os.environ.get('BRIGHT_DATA_PASSWORD', BRIGHT_DATA_PASSWORD)
+            'voting_url': saved_config.get('voting_url', TARGET_URL),
+            'voting_urls': saved_config.get('voting_urls', TARGET_URLS),
+            'bright_data_username': saved_config.get('bright_data_username', 
+                                    os.environ.get('BRIGHT_DATA_USERNAME', BRIGHT_DATA_USERNAME)),
+            'bright_data_password': saved_config.get('bright_data_password',
+                                    os.environ.get('BRIGHT_DATA_PASSWORD', BRIGHT_DATA_PASSWORD))
         })
     
-    elif request.method == 'POST':
+    elif request.method in ['POST', 'PUT']:
         data = request.json
-        # Update environment variables (in production, use proper config management)
-        if 'bright_data_username' in data:
-            os.environ['BRIGHT_DATA_USERNAME'] = data['bright_data_username']
-        if 'bright_data_password' in data:
-            os.environ['BRIGHT_DATA_PASSWORD'] = data['bright_data_password']
         
-        return jsonify({'status': 'success', 'message': 'Configuration updated'})
+        # Load existing config
+        saved_config = {}
+        if os.path.exists(config_file):
+            try:
+                with open(config_file, 'r') as f:
+                    saved_config = json.load(f)
+            except Exception as e:
+                logger.error(f"Error loading config file: {e}")
+        
+        # Update config based on what's provided
+        updated_fields = []
+        
+        if 'voting_url' in data:
+            saved_config['voting_url'] = data['voting_url']
+            saved_config['voting_urls'] = [data['voting_url']]  # Update list too
+            updated_fields.append('voting_url')
+        
+        if 'bright_data_username' in data:
+            saved_config['bright_data_username'] = data['bright_data_username']
+            os.environ['BRIGHT_DATA_USERNAME'] = data['bright_data_username']
+            updated_fields.append('bright_data_username')
+        
+        if 'bright_data_password' in data:
+            saved_config['bright_data_password'] = data['bright_data_password']
+            os.environ['BRIGHT_DATA_PASSWORD'] = data['bright_data_password']
+            updated_fields.append('bright_data_password')
+        
+        # Save to file for persistence
+        try:
+            with open(config_file, 'w') as f:
+                json.dump(saved_config, f, indent=2)
+            logger.info(f"[CONFIG] Saved configuration: {', '.join(updated_fields)}")
+            
+            return jsonify({
+                'status': 'success', 
+                'message': f'Configuration saved: {", ".join(updated_fields)}',
+                'updated_fields': updated_fields
+            })
+        except Exception as e:
+            logger.error(f"Error saving config file: {e}")
+            return jsonify({
+                'status': 'error',
+                'message': f'Failed to save configuration: {str(e)}'
+            }), 500
 
 @app.route('/api/start-monitoring', methods=['POST'])
 def start_monitoring():
@@ -138,10 +190,22 @@ def start_monitoring():
         # Get JSON data or use empty dict if no body
         data = request.get_json(silent=True) or {}
         
-        # Use credentials from request or environment variables
-        username = data.get('username') or BRIGHT_DATA_USERNAME
-        password = data.get('password') or BRIGHT_DATA_PASSWORD
-        voting_url = data.get('voting_url') or TARGET_URL
+        # Load saved config if available
+        config_file = os.path.join(project_root, 'user_config.json')
+        saved_config = {}
+        if os.path.exists(config_file):
+            try:
+                with open(config_file, 'r') as f:
+                    saved_config = json.load(f)
+            except Exception as e:
+                logger.error(f"Error loading config file: {e}")
+        
+        # Priority: request data > saved config > environment > config.py defaults
+        username = data.get('username') or saved_config.get('bright_data_username') or \
+                   os.environ.get('BRIGHT_DATA_USERNAME', BRIGHT_DATA_USERNAME)
+        password = data.get('password') or saved_config.get('bright_data_password') or \
+                   os.environ.get('BRIGHT_DATA_PASSWORD', BRIGHT_DATA_PASSWORD)
+        voting_url = data.get('voting_url') or saved_config.get('voting_url') or TARGET_URL
         
         if not username or not password:
             return jsonify({

@@ -154,18 +154,36 @@
 
                 <!-- Configuration -->
                 <div class="grid grid-cols-1 gap-4 mb-4">
-                    <div>
+                    <!-- Voting URL Section -->
+                    <div class="bg-white p-4 rounded-lg border border-gray-200">
                         <label class="block text-sm font-medium text-gray-700 mb-2">Voting URL</label>
-                        <input type="text" id="voting-url" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent" placeholder="https://www.cutebabyvote.com/...">
-                    </div>
-                    <div class="grid grid-cols-2 gap-4">
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-2">BrightData Username</label>
-                            <input type="text" id="username" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent" placeholder="username">
+                        <div class="flex gap-2">
+                            <input type="text" id="voting-url" class="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent" placeholder="https://www.cutebabyvote.com/...">
+                            <button id="save-url-btn" class="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium whitespace-nowrap">
+                                💾 Save URL
+                            </button>
                         </div>
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-2">BrightData Password</label>
-                            <input type="password" id="password" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent" placeholder="password">
+                        <p id="url-save-status" class="text-sm mt-2 hidden"></p>
+                    </div>
+                    
+                    <!-- Bright Data Credentials Section -->
+                    <div class="bg-white p-4 rounded-lg border border-gray-200">
+                        <label class="block text-sm font-medium text-gray-700 mb-2">Bright Data Credentials</label>
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-3">
+                            <div>
+                                <label class="block text-xs text-gray-600 mb-1">Username</label>
+                                <input type="text" id="username" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent" placeholder="username">
+                            </div>
+                            <div>
+                                <label class="block text-xs text-gray-600 mb-1">Password</label>
+                                <input type="password" id="password" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent" placeholder="password">
+                            </div>
+                        </div>
+                        <div class="flex gap-2">
+                            <button id="save-credentials-btn" class="px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors font-medium">
+                                💾 Save Credentials
+                            </button>
+                            <p id="credentials-save-status" class="text-sm my-auto hidden"></p>
                         </div>
                     </div>
                 </div>
@@ -407,11 +425,124 @@
                 usernameInput.value = data.bright_data_username || '';
                 passwordInput.value = data.bright_data_password || '';
                 
-                addLog('✅ Configuration loaded from config.py');
+                addLog('✅ Configuration loaded successfully');
             } catch (error) {
                 console.error('Error loading config:', error);
                 addLog('⚠️ Could not load configuration');
             }
+        }
+
+        // Save Voting URL
+        async function saveVotingUrl() {
+            const urlInput = document.getElementById('voting-url');
+            const statusElement = document.getElementById('url-save-status');
+            const saveBtn = document.getElementById('save-url-btn');
+            
+            const votingUrl = urlInput.value.trim();
+            
+            if (!votingUrl) {
+                showStatus(statusElement, '⚠️ Please enter a voting URL', 'text-orange-600');
+                return;
+            }
+            
+            // Basic URL validation
+            try {
+                new URL(votingUrl);
+            } catch (e) {
+                showStatus(statusElement, '❌ Invalid URL format', 'text-red-600');
+                return;
+            }
+            
+            // Disable button during save
+            saveBtn.disabled = true;
+            saveBtn.textContent = '💾 Saving...';
+            
+            try {
+                const response = await fetch(`${API_URL}/api/config`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        voting_url: votingUrl
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.status === 'success') {
+                    showStatus(statusElement, '✅ Voting URL saved successfully!', 'text-green-600');
+                    addLog(`💾 Voting URL saved: ${votingUrl}`);
+                } else {
+                    showStatus(statusElement, `❌ ${data.message}`, 'text-red-600');
+                }
+            } catch (error) {
+                console.error('Error saving voting URL:', error);
+                showStatus(statusElement, '❌ Failed to save voting URL', 'text-red-600');
+            } finally {
+                saveBtn.disabled = false;
+                saveBtn.textContent = '💾 Save URL';
+            }
+        }
+
+        // Save Bright Data Credentials
+        async function saveCredentials() {
+            const usernameInput = document.getElementById('username');
+            const passwordInput = document.getElementById('password');
+            const statusElement = document.getElementById('credentials-save-status');
+            const saveBtn = document.getElementById('save-credentials-btn');
+            
+            const username = usernameInput.value.trim();
+            const password = passwordInput.value.trim();
+            
+            if (!username || !password) {
+                showStatus(statusElement, '⚠️ Please enter both username and password', 'text-orange-600');
+                return;
+            }
+            
+            // Disable button during save
+            saveBtn.disabled = true;
+            saveBtn.textContent = '💾 Saving...';
+            
+            try {
+                const response = await fetch(`${API_URL}/api/config`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        bright_data_username: username,
+                        bright_data_password: password
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.status === 'success') {
+                    showStatus(statusElement, '✅ Credentials saved successfully!', 'text-green-600');
+                    addLog('💾 Bright Data credentials saved');
+                } else {
+                    showStatus(statusElement, `❌ ${data.message}`, 'text-red-600');
+                }
+            } catch (error) {
+                console.error('Error saving credentials:', error);
+                showStatus(statusElement, '❌ Failed to save credentials', 'text-red-600');
+            } finally {
+                saveBtn.disabled = false;
+                saveBtn.textContent = '💾 Save Credentials';
+            }
+        }
+
+        // Helper function to show status messages
+        function showStatus(element, message, className) {
+            element.textContent = message;
+            element.className = `text-sm mt-2 ${className}`;
+            element.classList.remove('hidden');
+            
+            // Auto-hide after 5 seconds
+            setTimeout(() => {
+                element.classList.add('hidden');
+            }, 5000);
         }
 
         // Setup event listeners
@@ -419,6 +550,21 @@
             startBtn.addEventListener('click', startMonitoring);
             stopBtn.addEventListener('click', stopMonitoring);
             clearLogsBtn.addEventListener('click', clearLogs);
+            
+            // Save buttons
+            document.getElementById('save-url-btn').addEventListener('click', saveVotingUrl);
+            document.getElementById('save-credentials-btn').addEventListener('click', saveCredentials);
+            
+            // Optional: Save on Enter key
+            votingUrlInput.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') saveVotingUrl();
+            });
+            usernameInput.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') saveCredentials();
+            });
+            passwordInput.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') saveCredentials();
+            });
         }
 
         // Start monitoring
@@ -568,12 +714,21 @@
             }
         }
 
-        // Format seconds into MM:SS
-        function formatCountdown(seconds) {
-            if (seconds <= 0) return 'Ready to vote';
+        // Format seconds into MM:SS with retry type
+        function formatCountdown(seconds, retryType = null) {
+            if (seconds <= 0) return '✅ Ready to vote';
             const minutes = Math.floor(seconds / 60);
             const secs = seconds % 60;
-            return `⏱️ ${minutes}:${secs.toString().padStart(2, '0')}`;
+            const timeStr = `${minutes}:${secs.toString().padStart(2, '0')}`;
+            
+            // Show different icons/labels based on retry type
+            if (retryType === 'technical') {
+                return `🔄 Retry in ${timeStr}`;
+            } else if (retryType === 'ip_cooldown') {
+                return `⏳ Cooldown ${timeStr}`;
+            } else {
+                return `⏳ Next vote ${timeStr}`;
+            }
         }
         
         // Render instances (used by both polling and Socket.IO)
@@ -594,10 +749,11 @@
             const newHTML = sortedInstances.map(instance => {
                 const instanceId = String(instance.instance_id);
                 const secondsRemaining = instance.seconds_remaining || 0;
-                const countdownText = formatCountdown(secondsRemaining);
+                const retryType = instance.retry_type || null;
+                const countdownText = formatCountdown(secondsRemaining, retryType);
                 
                 return `
-                <div class="mb-3 p-3 bg-gray-50 rounded-lg border border-gray-200" data-instance-id="${instanceId}" data-seconds="${secondsRemaining}">
+                <div class="mb-3 p-3 bg-gray-50 rounded-lg border border-gray-200" data-instance-id="${instanceId}" data-seconds="${secondsRemaining}" data-retry-type="${retryType || ''}">
                     <div class="flex items-center justify-between mb-2">
                         <span class="font-medium text-gray-900">Instance #${instance.instance_id}</span>
                         <span class="status-badge ${getStatusColor(instance.status)}">
@@ -608,7 +764,7 @@
                         <div>IP: ${instance.ip || 'N/A'}</div>
                         <div>Votes: ${instance.vote_count || 0}</div>
                         ${instance.is_paused ? '<div class="text-orange-600">⏸️ Paused</div>' : ''}
-                        <div class="font-semibold ${secondsRemaining > 0 ? 'text-blue-600' : 'text-green-600'}" data-countdown="${instanceId}">
+                        <div class="font-semibold ${secondsRemaining > 0 ? (retryType === 'technical' ? 'text-orange-600' : 'text-blue-600') : 'text-green-600'}" data-countdown="${instanceId}">
                             ${countdownText}
                         </div>
                     </div>
@@ -686,15 +842,20 @@
                 
                 if (countdownElement) {
                     let seconds = parseInt(card.getAttribute('data-seconds') || '0');
+                    const retryType = card.getAttribute('data-retry-type') || null;
                     
                     if (seconds > 0) {
                         seconds--;
                         card.setAttribute('data-seconds', seconds);
-                        countdownElement.textContent = formatCountdown(seconds);
+                        countdownElement.textContent = formatCountdown(seconds, retryType);
                         
-                        // Update color based on remaining time
+                        // Update color based on retry type and remaining time
                         if (seconds > 0) {
-                            countdownElement.className = 'font-semibold text-blue-600';
+                            if (retryType === 'technical') {
+                                countdownElement.className = 'font-semibold text-orange-600';
+                            } else {
+                                countdownElement.className = 'font-semibold text-blue-600';
+                            }
                         } else {
                             countdownElement.className = 'font-semibold text-green-600';
                         }
