@@ -1580,7 +1580,7 @@ def auto_start_monitoring():
                                     'monitoring_active': True,
                                     'loop_count': loop_count,
                                     'active_instances': len(voter_system.active_instances) if voter_system else 0
-                                }, broadcast=True)
+                                })
                         except Exception as e:
                             logger.error(f"Error emitting status update: {e}")
                         
@@ -1589,7 +1589,7 @@ def auto_start_monitoring():
                             stats = vote_logger.get_statistics()
                             stats['active_instances'] = len(voter_system.active_instances) if voter_system else 0
                             with app.app_context():
-                                socketio.emit('statistics_update', stats, broadcast=True)
+                                socketio.emit('statistics_update', stats)
                         except Exception as e:
                             logger.error(f"Error emitting statistics: {e}")
                         
@@ -1615,7 +1615,7 @@ def auto_start_monitoring():
                                         'last_failure_type': getattr(instance, 'last_failure_type', None)
                                     })
                                 with app.app_context():
-                                    socketio.emit('instances_update', {'instances': instances}, broadcast=True)
+                                    socketio.emit('instances_update', {'instances': instances})
                         except Exception as e:
                             logger.error(f"Error emitting instances update: {e}")
                         
