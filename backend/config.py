@@ -4,8 +4,8 @@ Configuration file for CloudVoter
 
 # Bright Data Proxy Credentials
 # Update these when credentials change
-BRIGHT_DATA_USERNAME = "hl_47ba96ab"
-BRIGHT_DATA_PASSWORD = "tcupn0cw7pbz"
+BRIGHT_DATA_USERNAME = "hl_6787a71e"
+BRIGHT_DATA_PASSWORD = "82s48z9dhx71"
 
 # Target voting URLs
 TARGET_URLS = [
