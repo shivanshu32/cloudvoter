@@ -92,6 +92,7 @@ class VoterInstance:
         self.login_detected = False  # True if "Login with Google" detected
         self.login_detected_time = None  # When login was detected
         self.login_detection_reason = None  # Reason for login detection
+        self.consecutive_init_failures = 0  # Track consecutive browser init failures for exponential backoff
         self.excluded_from_cycles = False  # True if permanently excluded until restart
         self.pause_event = asyncio.Event()
         self.pause_event.set()
@@ -355,9 +356,25 @@ class VoterInstance:
             
             # Acquire semaphore to ensure sequential browser launch
             if self.voter_manager and hasattr(self.voter_manager, 'browser_launch_semaphore'):
-                async with self.voter_manager.browser_launch_semaphore:
-                    logger.info(f"[INIT] Instance #{self.instance_id} acquired browser launch lock")
-                    return await self._initialize_browser(use_session)
+                try:
+                    # Try to acquire lock with timeout to prevent deadlock
+                    logger.info(f"[INIT] Instance #{self.instance_id} waiting for browser launch lock...")
+                    await asyncio.wait_for(
+                        self.voter_manager.browser_launch_semaphore.acquire(),
+                        timeout=30.0  # Max 30 seconds wait for lock
+                    )
+                    try:
+                        logger.info(f"[INIT] Instance #{self.instance_id} acquired browser launch lock")
+                        result = await self._initialize_browser(use_session)
+                        return result
+                    finally:
+                        # ALWAYS release the lock
+                        self.voter_manager.browser_launch_semaphore.release()
+                        logger.info(f"[INIT] Instance #{self.instance_id} released browser launch lock")
+                except asyncio.TimeoutError:
+                    logger.warning(f"[INIT] Instance #{self.instance_id} couldn't acquire browser launch lock within 30s - will retry later")
+                    self.status = "Waiting for lock"
+                    return False
             else:
                 # Fallback if no voter_manager
                 return await self._initialize_browser(use_session)
@@ -442,9 +459,25 @@ class VoterInstance:
             
             # Acquire semaphore to ensure sequential browser launch
             if self.voter_manager and hasattr(self.voter_manager, 'browser_launch_semaphore'):
-                async with self.voter_manager.browser_launch_semaphore:
-                    logger.info(f"[INIT] Instance #{self.instance_id} acquired browser launch lock")
-                    return await self._initialize_browser_with_session(storage_state_path)
+                try:
+                    # Try to acquire lock with timeout to prevent deadlock
+                    logger.info(f"[INIT] Instance #{self.instance_id} waiting for browser launch lock...")
+                    await asyncio.wait_for(
+                        self.voter_manager.browser_launch_semaphore.acquire(),
+                        timeout=30.0  # Max 30 seconds wait for lock
+                    )
+                    try:
+                        logger.info(f"[INIT] Instance #{self.instance_id} acquired browser launch lock")
+                        result = await self._initialize_browser_with_session(storage_state_path)
+                        return result
+                    finally:
+                        # ALWAYS release the lock
+                        self.voter_manager.browser_launch_semaphore.release()
+                        logger.info(f"[INIT] Instance #{self.instance_id} released browser launch lock")
+                except asyncio.TimeoutError:
+                    logger.warning(f"[INIT] Instance #{self.instance_id} couldn't acquire browser launch lock within 30s - will retry later")
+                    self.status = "Waiting for lock"
+                    return False
             else:
                 # Fallback if no voter_manager
                 return await self._initialize_browser_with_session(storage_state_path)
@@ -1522,9 +1555,28 @@ class VoterInstance:
                         init_success = await self.initialize(skip_cooldown_check=True)
                     
                     if not init_success:
-                        logger.error(f"[CYCLE] Instance #{self.instance_id} browser re-initialization failed, retrying...")
-                        await asyncio.sleep(30)
+                        # Track consecutive failures for exponential backoff
+                        self.consecutive_init_failures += 1
+                        
+                        # Exponential backoff: 30s, 60s, 120s, 240s, max 300s (5 min)
+                        backoff_time = min(30 * (2 ** (self.consecutive_init_failures - 1)), 300)
+                        
+                        logger.error(f"[CYCLE] Instance #{self.instance_id} browser re-initialization failed (attempt {self.consecutive_init_failures}), retrying in {backoff_time}s...")
+                        
+                        # After 5 consecutive failures, pause instance to prevent infinite loop
+                        if self.consecutive_init_failures >= 5:
+                            logger.error(f"[CYCLE] Instance #{self.instance_id} failed 5 consecutive times, pausing instance")
+                            self.status = "⚠️ Init Failed - Paused"
+                            self.is_paused = True
+                            self.pause_event.clear()
+                            self.consecutive_init_failures = 0  # Reset counter
+                            continue
+                        
+                        await asyncio.sleep(backoff_time)
                         continue
+                    
+                    # Reset failure counter on successful initialization
+                    self.consecutive_init_failures = 0
                     
                     # CRITICAL: Wait for browser to fully stabilize after reopen
                     # This prevents false positive login detection during page load
@@ -1812,6 +1864,7 @@ class MultiInstanceVoter:
         # Hourly limit management
         self.global_hourly_limit = False
         self.global_reactivation_time = None
+        self.hourly_limit_start_time = None  # Track when hourly limit was detected
         self.hourly_limit_check_task = None
         
         # Browser monitoring
@@ -2078,8 +2131,9 @@ class MultiInstanceVoter:
             
             logger.info("[HOURLY_LIMIT] 🚫 HOURLY LIMIT DETECTED - Pausing ALL instances")
             
-            # Set global limit flag
+            # Set global limit flag and track start time
             self.global_hourly_limit = True
+            self.hourly_limit_start_time = datetime.now()  # Track when limit was detected
             
             # Calculate reactivation time (next hour)
             next_hour = (datetime.now() + timedelta(hours=1)).replace(minute=0, second=0, microsecond=0)
@@ -2284,9 +2338,19 @@ class MultiInstanceVoter:
                                 await instance.close_browser()
                                 logger.info(f"[MONITOR] Closed browser for instance #{instance.instance_id}: Error status")
                         elif self.global_hourly_limit and instance.browser:
-                            # Close browsers during global hourly limit to save resources
-                            await instance.close_browser()
-                            logger.info(f"[MONITOR] Closed browser for instance #{instance.instance_id}: Global hourly limit")
+                            # Only close browsers if hourly limit has been active for >60 seconds
+                            # This prevents closing browsers on false positive detections
+                            if self.hourly_limit_start_time:
+                                time_in_limit = (datetime.now() - self.hourly_limit_start_time).total_seconds()
+                                if time_in_limit > 60:  # Only close after 60 seconds
+                                    await instance.close_browser()
+                                    logger.info(f"[MONITOR] Closed browser for instance #{instance.instance_id}: Global hourly limit (active for {int(time_in_limit)}s)")
+                                else:
+                                    logger.debug(f"[MONITOR] Skipping browser close for instance #{instance.instance_id}: Hourly limit active for only {int(time_in_limit)}s (waiting for 60s)")
+                            else:
+                                # No start time set, close immediately (backward compatibility)
+                                await instance.close_browser()
+                                logger.info(f"[MONITOR] Closed browser for instance #{instance.instance_id}: Global hourly limit")
                     except Exception as e:
                         logger.error(f"[MONITOR] Error monitoring instance #{instance.instance_id}: {e}")
                 
