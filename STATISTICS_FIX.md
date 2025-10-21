@@ -1,39 +1,38 @@
-# Statistics Display Fix
+# Statistics Cards Fix - Shared Vote Logger Issue
 
 ## Problem
-The statistics cards in the UI were always displaying 0 for:
-- **Total Attempts**: 0
-- **Successful Votes**: 0  
-- **Failed Votes**: 0
 
-Only the **Active Instances** card showed the correct count.
+Statistics cards (Total Attempts, Successful Votes, Failed Votes) always show 0 even though votes are being logged.
 
 ## Root Cause
 
-**Path Mismatch Between Vote Loggers:**
+**Each VoterInstance was creating its OWN VoteLogger instance with separate session counters!**
 
-1. **app.py** (statistics endpoint):
-   ```python
-   vote_logger = VoteLogger()  # Uses default path: 'voting_logs.csv' (relative)
-   ```
-   This created the file at: `backend/voting_logs.csv`
+1. `app.py` creates a `vote_logger` instance (line 56)
+2. Each `VoterInstance` creates its OWN `vote_logger` instance (line 116)
+3. Instances log votes to THEIR vote_logger objects (incrementing THEIR counters)
+4. API reads statistics from app.py's vote_logger (which has counters at 0)
+5. Result: Statistics always show 0 because app.py's vote_logger never receives any votes
 
-2. **voter_engine.py** (VoterInstance):
-   ```python
-   project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-   log_file_path = os.path.join(project_root, "voting_logs.csv")
-   self.vote_logger = VoteLogger(log_file=log_file_path)
-   ```
-   This writes to: `cloudvoter/voting_logs.csv` (project root)
+**Proof**:
+```python
+# app.py line 56
+vote_logger = VoteLogger(log_file=vote_logger_path)  # Counter: 0
 
-**Result:** 
-- Votes were being logged to `cloudvoter/voting_logs.csv`
-- Statistics were being read from `backend/voting_logs.csv` (empty file)
-- UI showed 0 for all statistics
+# voter_engine.py line 116 (in VoterInstance.__init__)
+self.vote_logger = VoteLogger(log_file=log_file_path)  # Counter: 0
+
+# When instance votes:
+self.vote_logger.log_vote_attempt(...)  # Increments INSTANCE's counter
+# But app.py's vote_logger counter remains 0!
+
+# When API requests statistics:
+stats = vote_logger.get_statistics()  # Returns app.py's counter: 0
+```
 
 ## Solution
 
-Fixed the `vote_logger` initialization in `app.py` to use the **same absolute path** as `VoterInstance`:
+**Make all instances share the SAME vote_logger object from app.py**
 
 ```python
 # Vote logger - use absolute path to match VoterInstance

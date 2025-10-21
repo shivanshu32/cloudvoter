@@ -69,7 +69,7 @@ class BrightDataAPI:
 class VoterInstance:
     """Individual voting instance with browser automation"""
     
-    def __init__(self, proxy_ip: str, proxy_config: dict, instance_id: int, target_url: str, voter_manager=None):
+    def __init__(self, proxy_ip: str, proxy_config: dict, instance_id: int, target_url: str, voter_manager=None, vote_logger=None):
         self.proxy_ip = proxy_ip
         self.proxy_config = proxy_config
         self.instance_id = instance_id
@@ -110,10 +110,14 @@ class VoterInstance:
         self.vote_count = 0
         self.failed_attempts = 0
         
-        # Vote logger
-        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        log_file_path = os.path.join(project_root, "voting_logs.csv")
-        self.vote_logger = VoteLogger(log_file=log_file_path)
+        # Vote logger - use shared logger if provided, otherwise create new one
+        if vote_logger:
+            self.vote_logger = vote_logger
+        else:
+            # Fallback: create own logger (for backward compatibility)
+            project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            log_file_path = os.path.join(project_root, "voting_logs.csv")
+            self.vote_logger = VoteLogger(log_file=log_file_path)
         
         # Resource blocking control (from config)
         self.enable_resource_blocking = ENABLE_RESOURCE_BLOCKING
@@ -387,68 +391,84 @@ class VoterInstance:
     async def _initialize_browser(self, use_session=False):
         """Internal method to initialize browser (called within semaphore)"""
         try:
-            # Start Playwright
-            self.playwright = await async_playwright().start()
+            # Wrap entire browser initialization with timeout
+            from config import BROWSER_INIT_TIMEOUT
             
-            # Browser launch arguments
-            browser_args = [
-                '--no-sandbox',
-                '--disable-blink-features=AutomationControlled',
-                '--disable-dev-shm-usage'
-            ]
-            
-            # Launch browser with proxy
-            self.browser = await self.playwright.chromium.launch(
-                headless=True,
-                proxy={
-                    'server': self.proxy_config['server'],
-                    'username': self.proxy_config['username'],
-                    'password': self.proxy_config['password']
-                },
-                args=browser_args
-            )
-            
-            # Track browser start time and generate unique session ID
-            self.browser_start_time = datetime.now()
-            import uuid
-            self.browser_session_id = str(uuid.uuid4())[:8]  # Short unique ID
-            logger.info(f"[BROWSER] Instance #{self.instance_id} browser session: {self.browser_session_id}")
-            
-            # Create context
-            if use_session and os.path.exists(os.path.join(self.session_dir, 'storage_state.json')):
-                # Restore session
-                storage_state_path = os.path.join(self.session_dir, 'storage_state.json')
-                self.context = await self.browser.new_context(
-                    storage_state=storage_state_path,
-                    viewport={'width': 1920, 'height': 1080}
+            async def _do_init():
+                # Start Playwright
+                self.playwright = await async_playwright().start()
+                
+                # Browser launch arguments
+                browser_args = [
+                    '--no-sandbox',
+                    '--disable-blink-features=AutomationControlled',
+                    '--disable-dev-shm-usage'
+                ]
+                
+                # Launch browser with proxy
+                self.browser = await self.playwright.chromium.launch(
+                    headless=True,
+                    proxy={
+                        'server': self.proxy_config['server'],
+                        'username': self.proxy_config['username'],
+                        'password': self.proxy_config['password']
+                    },
+                    args=browser_args
                 )
-                logger.info(f"[INIT] Instance #{self.instance_id} restored session")
-            else:
-                # New session
-                self.context = await self.browser.new_context(
-                    viewport={'width': 1920, 'height': 1080}
-                )
+                
+                # Track browser start time and generate unique session ID
+                self.browser_start_time = datetime.now()
+                import uuid
+                self.browser_session_id = str(uuid.uuid4())[:8]  # Short unique ID
+                logger.info(f"[BROWSER] Instance #{self.instance_id} browser session: {self.browser_session_id}")
+                
+                # Create context
+                if use_session and os.path.exists(os.path.join(self.session_dir, 'storage_state.json')):
+                    # Restore session
+                    storage_state_path = os.path.join(self.session_dir, 'storage_state.json')
+                    self.context = await self.browser.new_context(
+                        storage_state=storage_state_path,
+                        viewport={'width': 1920, 'height': 1080}
+                    )
+                    logger.info(f"[INIT] Instance #{self.instance_id} restored session")
+                else:
+                    # New session
+                    self.context = await self.browser.new_context(
+                        viewport={'width': 1920, 'height': 1080}
+                    )
+                
+                # Create page
+                self.page = await self.context.new_page()
+                
+                # Enable resource blocking if configured
+                if self.enable_resource_blocking:
+                    await self.page.route("**/*", self._handle_resource_blocking)
+                    blocked_types = []
+                    if self.block_images: blocked_types.append("images")
+                    if self.block_stylesheets: blocked_types.append("CSS")
+                    if self.block_fonts: blocked_types.append("fonts")
+                    if self.block_tracking: blocked_types.append("tracking")
+                    blocked_types.append("media")  # Always blocked
+                    logger.info(f"[INIT] Instance #{self.instance_id} resource blocking enabled - blocking: {', '.join(blocked_types)}")
+                
+                self.status = "Ready"
+                logger.info(f"[INIT] Instance #{self.instance_id} initialized successfully")
+                return True
             
-            # Create page
-            self.page = await self.context.new_page()
-            
-            # Enable resource blocking if configured
-            if self.enable_resource_blocking:
-                await self.page.route("**/*", self._handle_resource_blocking)
-                blocked_types = []
-                if self.block_images: blocked_types.append("images")
-                if self.block_stylesheets: blocked_types.append("CSS")
-                if self.block_fonts: blocked_types.append("fonts")
-                if self.block_tracking: blocked_types.append("tracking")
-                blocked_types.append("media")  # Always blocked
-                logger.info(f"[INIT] Instance #{self.instance_id} resource blocking enabled - blocking: {', '.join(blocked_types)}")
-            
-            self.status = "Ready"
-            logger.info(f"[INIT] Instance #{self.instance_id} initialized successfully")
-            return True
+            # Execute with timeout
+            try:
+                return await asyncio.wait_for(_do_init(), timeout=BROWSER_INIT_TIMEOUT)
+            except asyncio.TimeoutError:
+                logger.error(f"[INIT] Instance #{self.instance_id} browser initialization TIMEOUT after {BROWSER_INIT_TIMEOUT}s - force closing")
+                # Force close browser
+                await self.close_browser()
+                self.status = "Init Timeout"
+                return False
             
         except Exception as e:
             logger.error(f"[INIT] Instance #{self.instance_id} initialization failed: {e}")
+            # Ensure cleanup on error
+            await self.close_browser()
             self.status = "Error"
             return False
     
@@ -492,62 +512,78 @@ class VoterInstance:
     async def _initialize_browser_with_session(self, storage_state_path: str):
         """Internal method to initialize browser with session (called within semaphore)"""
         try:
-            # Start Playwright
-            self.playwright = await async_playwright().start()
+            # Wrap entire browser initialization with timeout
+            from config import BROWSER_INIT_TIMEOUT
             
-            # Browser launch arguments
-            browser_args = [
-                '--no-sandbox',
-                '--disable-blink-features=AutomationControlled',
-                '--disable-dev-shm-usage'
-            ]
+            async def _do_init():
+                # Start Playwright
+                self.playwright = await async_playwright().start()
+                
+                # Browser launch arguments
+                browser_args = [
+                    '--no-sandbox',
+                    '--disable-blink-features=AutomationControlled',
+                    '--disable-dev-shm-usage'
+                ]
+                
+                # Launch browser with proxy
+                self.browser = await self.playwright.chromium.launch(
+                    headless=True,
+                    proxy={
+                        'server': self.proxy_config['server'],
+                        'username': self.proxy_config['username'],
+                        'password': self.proxy_config['password']
+                    },
+                    args=browser_args
+                )
+                
+                # Track browser start time and generate unique session ID
+                self.browser_start_time = datetime.now()
+                import uuid
+                self.browser_session_id = str(uuid.uuid4())[:8]  # Short unique ID
+                logger.info(f"[BROWSER] Instance #{self.instance_id} browser session: {self.browser_session_id}")
+                
+                # Create context with saved session
+                self.context = await self.browser.new_context(
+                    storage_state=storage_state_path,
+                    viewport={'width': 1920, 'height': 1080}
+                )
+                logger.info(f"[INIT] Instance #{self.instance_id} restored session from {storage_state_path}")
+                
+                # Create page
+                self.page = await self.context.new_page()
+                
+                # Enable resource blocking if configured
+                if self.enable_resource_blocking:
+                    await self.page.route("**/*", self._handle_resource_blocking)
+                    blocked_types = []
+                    if self.block_images: blocked_types.append("images")
+                    if self.block_stylesheets: blocked_types.append("CSS")
+                    if self.block_fonts: blocked_types.append("fonts")
+                    if self.block_tracking: blocked_types.append("tracking")
+                    blocked_types.append("media")  # Always blocked
+                    logger.info(f"[INIT] Instance #{self.instance_id} resource blocking enabled - blocking: {', '.join(blocked_types)}")
+                
+                self.status = "Ready"
+                logger.info(f"[INIT] Instance #{self.instance_id} initialized successfully with saved session")
+                return True
             
-            # Launch browser with proxy
-            self.browser = await self.playwright.chromium.launch(
-                headless=True,
-                proxy={
-                    'server': self.proxy_config['server'],
-                    'username': self.proxy_config['username'],
-                    'password': self.proxy_config['password']
-                },
-                args=browser_args
-            )
-            
-            # Track browser start time and generate unique session ID
-            self.browser_start_time = datetime.now()
-            import uuid
-            self.browser_session_id = str(uuid.uuid4())[:8]  # Short unique ID
-            logger.info(f"[BROWSER] Instance #{self.instance_id} browser session: {self.browser_session_id}")
-            
-            # Create context with saved session
-            self.context = await self.browser.new_context(
-                storage_state=storage_state_path,
-                viewport={'width': 1920, 'height': 1080}
-            )
-            logger.info(f"[INIT] Instance #{self.instance_id} restored session from {storage_state_path}")
-            
-            # Create page
-            self.page = await self.context.new_page()
-            
-            # Enable resource blocking if configured
-            if self.enable_resource_blocking:
-                await self.page.route("**/*", self._handle_resource_blocking)
-                blocked_types = []
-                if self.block_images: blocked_types.append("images")
-                if self.block_stylesheets: blocked_types.append("CSS")
-                if self.block_fonts: blocked_types.append("fonts")
-                if self.block_tracking: blocked_types.append("tracking")
-                blocked_types.append("media")  # Always blocked
-                logger.info(f"[INIT] Instance #{self.instance_id} resource blocking enabled - blocking: {', '.join(blocked_types)}")
-            
-            self.status = "Ready"
-            logger.info(f"[INIT] Instance #{self.instance_id} initialized successfully with saved session")
-            return True
+            # Execute with timeout
+            try:
+                return await asyncio.wait_for(_do_init(), timeout=BROWSER_INIT_TIMEOUT)
+            except asyncio.TimeoutError:
+                logger.error(f"[INIT] Instance #{self.instance_id} browser initialization TIMEOUT after {BROWSER_INIT_TIMEOUT}s - force closing")
+                # Force close browser
+                await self.close_browser()
+                self.status = "Init Timeout"
+                return False
             
         except Exception as e:
             logger.error(f"[INIT] Instance #{self.instance_id} initialization failed: {e}")
             import traceback
             logger.error(traceback.format_exc())
+            # Ensure cleanup on error
+            await self.close_browser()
             self.status = "Error"
             return False
     
@@ -1840,7 +1876,7 @@ class VoterInstance:
 class MultiInstanceVoter:
     """Manager for multiple voting instances"""
     
-    def __init__(self, username: str, password: str, target_url: str):
+    def __init__(self, username: str, password: str, target_url: str, vote_logger=None):
         self.username = username
         self.password = password
         self.target_url = target_url
@@ -1860,6 +1896,16 @@ class MultiInstanceVoter:
         # Instance management
         self.active_instances = {}
         self.used_ips = set()
+        
+        # Shared vote logger for all instances
+        if vote_logger:
+            self.vote_logger = vote_logger
+        else:
+            # Fallback: create own logger
+            from vote_logger import VoteLogger
+            project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            log_file_path = os.path.join(project_root, "voting_logs.csv")
+            self.vote_logger = VoteLogger(log_file=log_file_path)
         
         # Hourly limit management
         self.global_hourly_limit = False
@@ -1995,8 +2041,8 @@ class MultiInstanceVoter:
             # Get next instance ID
             next_instance_id = len(self.active_instances) + 1
             
-            # Create instance
-            instance = VoterInstance(proxy_ip, instance_proxy_config, next_instance_id, self.target_url, self)
+            # Create instance with shared vote_logger
+            instance = VoterInstance(proxy_ip, instance_proxy_config, next_instance_id, self.target_url, self, self.vote_logger)
             instance.session_id = session_id
             
             # Initialize instance
@@ -2085,8 +2131,8 @@ class MultiInstanceVoter:
                 'password': self.proxy_api.password
             }
             
-            # Create instance
-            instance = VoterInstance(new_proxy_ip, instance_proxy_config, instance_id, self.target_url, self)
+            # Create instance with shared vote_logger
+            instance = VoterInstance(new_proxy_ip, instance_proxy_config, instance_id, self.target_url, self, self.vote_logger)
             instance.session_id = session_id
             instance.session_path = session_path
             instance.storage_state_path = storage_state_path
@@ -2171,42 +2217,25 @@ class MultiInstanceVoter:
                     current_time = datetime.now()  # Server is IST
                     
                     if current_time >= reactivation_dt:
-                        logger.info(f"[HOURLY_LIMIT] ✅ Hourly limit expired - Resuming instances SEQUENTIALLY")
+                        logger.info(f"[HOURLY_LIMIT] ✅ Hourly limit expired - Clearing global limit flag")
                         
-                        # Clear global limit
+                        # Clear global limit flag - instances will resume naturally via auto-unpause
                         self.global_hourly_limit = False
                         self.global_reactivation_time = None
+                        self.hourly_limit_start_time = None
                         
-                        # Resume instances SEQUENTIALLY to prevent memory overload
-                        self.sequential_resume_active = True
-                        resumed_count = 0
-                        
-                        # Collect instances to resume
-                        instances_to_resume = [
+                        # Count instances that will be eligible for auto-unpause
+                        paused_instances = [
                             instance for ip, instance in self.active_instances.items()
                             if instance.is_paused and "Hourly Limit" in instance.status
                         ]
                         
-                        logger.info(f"[HOURLY_LIMIT] Found {len(instances_to_resume)} instances to resume")
+                        logger.info(f"[HOURLY_LIMIT] Found {len(paused_instances)} paused instances")
+                        logger.info(f"[HOURLY_LIMIT] Instances will resume ONE AT A TIME via auto-unpause (same as startup)")
+                        logger.info(f"[HOURLY_LIMIT] Expected resume time: ~{len(paused_instances) * 0.5} minutes (30s per instance)")
                         
-                        # Resume instances one by one with delay
-                        for instance in instances_to_resume:
-                            try:
-                                instance.is_paused = False
-                                instance.pause_event.set()
-                                instance.status = "▶️ Resumed - Initializing"
-                                resumed_count += 1
-                                logger.info(f"[HOURLY_LIMIT] Resumed instance #{instance.instance_id} ({resumed_count}/{len(instances_to_resume)})")
-                                
-                                # Wait before resuming next instance to prevent memory spike
-                                if resumed_count < len(instances_to_resume):
-                                    logger.info(f"[HOURLY_LIMIT] Waiting {self.browser_launch_delay}s before next resume...")
-                                    await asyncio.sleep(self.browser_launch_delay)
-                            except Exception as e:
-                                logger.error(f"[HOURLY_LIMIT] Error resuming instance #{instance.instance_id}: {e}")
-                        
-                        self.sequential_resume_active = False
-                        logger.info(f"[HOURLY_LIMIT] ✅ Sequential resume completed: {resumed_count} instances")
+                        # Exit the hourly limit monitoring loop
+                        # Auto-unpause will handle resuming instances one at a time
                         break
                     else:
                         # Log remaining time
@@ -2246,25 +2275,23 @@ class MultiInstanceVoter:
                             seconds_remaining = time_info.get('seconds_remaining', 0)
                             
                             # If cooldown expired and NOT in global hourly limit
+                            # Auto-unpause will handle ALL resuming (including after hourly limit)
                             if seconds_remaining == 0 and not self.global_hourly_limit:
                                 instances_to_unpause.append(instance)
                     
-                    # Unpause instances SEQUENTIALLY with delay to prevent simultaneous browser opens
+                    # Unpause ONE instance at a time (same conservative approach as startup)
                     if instances_to_unpause:
-                        logger.info(f"[AUTO-UNPAUSE] Found {len(instances_to_unpause)} instances ready to unpause")
+                        # Only unpause the FIRST ready instance
+                        instance = instances_to_unpause[0]
+                        logger.info(f"[AUTO-UNPAUSE] Instance #{instance.instance_id} cooldown expired - auto-unpausing (1/{len(instances_to_unpause)} ready)")
+                        instance.is_paused = False
+                        instance.pause_event.set()
+                        instance.status = "▶️ Resumed - Ready to Vote"
                         
-                        for idx, instance in enumerate(instances_to_unpause, 1):
-                            logger.info(f"[AUTO-UNPAUSE] Instance #{instance.instance_id} cooldown expired - auto-unpausing ({idx}/{len(instances_to_unpause)})")
-                            instance.is_paused = False
-                            instance.pause_event.set()
-                            instance.status = "▶️ Resumed - Ready to Vote"
-                            
-                            # Add delay between unpauses to prevent simultaneous browser opens
-                            if idx < len(instances_to_unpause):
-                                logger.debug(f"[AUTO-UNPAUSE] Waiting {self.browser_launch_delay}s before next unpause...")
-                                await asyncio.sleep(self.browser_launch_delay)
+                        if len(instances_to_unpause) > 1:
+                            logger.info(f"[AUTO-UNPAUSE] {len(instances_to_unpause) - 1} more instances waiting (will check in 30s)")
                     
-                    # Check every 30 seconds
+                    # Check every 30 seconds (same as startup scan interval)
                     await asyncio.sleep(30)
                     
                 except Exception as e:

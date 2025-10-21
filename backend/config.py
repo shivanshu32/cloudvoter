@@ -102,7 +102,8 @@ MONITORING_CHECK_INTERVAL = 60
 
 # Sequential browser launch configuration (prevents memory overload)
 BROWSER_LAUNCH_DELAY = 5  # Seconds to wait between browser launches
-MAX_CONCURRENT_BROWSER_LAUNCHES = 3  # Maximum number of browsers that can launch simultaneously (increased from 1 to prevent deadlock)
+MAX_CONCURRENT_BROWSER_LAUNCHES = 2  # Maximum number of browsers open at any time (conservative for memory)
+BROWSER_INIT_TIMEOUT = 60  # Timeout for browser initialization in seconds (force close if stuck)
 
 # Retry configuration (minutes to wait before retrying after failure)
 RETRY_DELAY_TECHNICAL = 5   # Technical failures (button not found, exception, etc.)

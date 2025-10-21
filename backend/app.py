@@ -219,12 +219,13 @@ def start_monitoring():
                 'message': 'Monitoring already active'
             }), 400
         
-        # Initialize voter system
+        # Initialize voter system with shared vote_logger
         if not voter_system:
             voter_system = MultiInstanceVoter(
                 username=username,
                 password=password,
-                target_url=voting_url
+                target_url=voting_url,
+                vote_logger=vote_logger
             )
             logger.info("✅ Voter system initialized")
         
@@ -445,11 +446,12 @@ def restart_system():
                 'message': 'Bright Data credentials required'
             }), 400
         
-        # Reinitialize voter system
+        # Reinitialize voter system with shared vote_logger
         voter_system = MultiInstanceVoter(
             username=username,
             password=password,
-            target_url=voting_url
+            target_url=voting_url,
+            vote_logger=vote_logger
         )
         logger.info("✅ Voter system reinitialized")
         
@@ -726,6 +728,24 @@ def get_statistics():
         return jsonify(stats)
     except Exception as e:
         logger.error(f"❌ Error getting statistics: {e}")
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        }), 500
+
+@app.route('/api/hourly-analytics', methods=['GET'])
+def get_hourly_analytics():
+    """Get hourly voting analytics from CSV logs"""
+    try:
+        analytics = vote_logger.get_hourly_analytics()
+        return jsonify({
+            'status': 'success',
+            'analytics': analytics
+        })
+    except Exception as e:
+        logger.error(f"❌ Error getting hourly analytics: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
         return jsonify({
             'status': 'error',
             'message': str(e)
@@ -1076,9 +1096,9 @@ def save_google_login(instance_id):
                 'message': 'BrightData credentials required'
             }), 400
         
-        # Initialize voter system if not exists
+        # Initialize voter system if not exists with shared vote_logger
         if not voter_system:
-            voter_system = MultiInstanceVoter(username, password, TARGET_URL)
+            voter_system = MultiInstanceVoter(username, password, TARGET_URL, vote_logger)
         
         async def open_login_browser():
             try:
@@ -1616,12 +1636,13 @@ def auto_start_monitoring():
             logger.error("❌ Cannot auto-start: Bright Data credentials not configured")
             return
         
-        # Initialize voter system
+        # Initialize voter system with shared vote_logger
         if not voter_system:
             voter_system = MultiInstanceVoter(
                 username=username,
                 password=password,
-                target_url=voting_url
+                target_url=voting_url,
+                vote_logger=vote_logger
             )
             logger.info("✅ Voter system initialized")
         

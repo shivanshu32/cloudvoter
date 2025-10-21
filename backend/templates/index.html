@@ -135,6 +135,14 @@
                             <span>Login Required</span>
                         </span>
                     </button>
+                    <button class="tab-btn" onclick="switchTab('hourly-analytics')">
+                        <span class="flex items-center space-x-2">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path>
+                            </svg>
+                            <span>Hourly Analytics</span>
+                        </span>
+                    </button>
                     <button class="tab-btn" onclick="switchTab('logs')">
                         <span class="flex items-center space-x-2">
                             <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -348,6 +356,67 @@
                 </div>
             </div>
             <!-- End Login Required Tab -->
+
+            <!-- Hourly Analytics Tab -->
+            <div id="hourly-analytics-tab" class="tab-content">
+                <div class="bg-white rounded-lg shadow-sm border border-gray-200 mb-6">
+                    <div class="px-6 py-4 border-b border-gray-200">
+                        <h3 class="text-lg font-semibold text-gray-900">Hourly Voting Analytics</h3>
+                        <p class="text-sm text-gray-600 mt-1">Track votes per hour and hourly limit occurrences</p>
+                    </div>
+                    
+                    <!-- Filters and Controls -->
+                    <div class="px-6 py-4 border-b border-gray-200 bg-gray-50">
+                        <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-2">Date Filter</label>
+                                <select id="analytics-date-filter" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500">
+                                    <option value="today">Today</option>
+                                    <option value="yesterday">Yesterday</option>
+                                    <option value="last7days">Last 7 Days</option>
+                                    <option value="last30days">Last 30 Days</option>
+                                    <option value="all">All Time</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-2">Sort By</label>
+                                <select id="analytics-sort" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500">
+                                    <option value="hour-desc">Hour (Newest First)</option>
+                                    <option value="hour-asc">Hour (Oldest First)</option>
+                                    <option value="votes-desc">Votes (High to Low)</option>
+                                    <option value="votes-asc">Votes (Low to High)</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-2">Show</label>
+                                <select id="analytics-filter" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500">
+                                    <option value="all">All Hours</option>
+                                    <option value="with-limit">Hours with Limit</option>
+                                    <option value="without-limit">Hours without Limit</option>
+                                </select>
+                            </div>
+                            <div class="flex items-end">
+                                <button onclick="loadHourlyAnalytics()" class="w-full px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg transition-colors">
+                                    Refresh Data
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Analytics Content -->
+                    <div class="p-6">
+                        <div id="hourly-analytics-content" class="space-y-4">
+                            <div class="text-center py-12 text-gray-500">
+                                <svg class="w-16 h-16 mx-auto mb-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path>
+                                </svg>
+                                <p>Click "Refresh Data" to load hourly analytics</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <!-- End Hourly Analytics Tab -->
 
             <!-- Logs Tab -->
             <div id="logs-tab" class="tab-content">
@@ -1417,6 +1486,169 @@
                 loadLoginRequiredInstances();
             }
         }, 5000); // Refresh every 5 seconds
+
+        // Load hourly analytics
+        async function loadHourlyAnalytics() {
+            try {
+                const response = await fetch(`${API_URL}/api/hourly-analytics`);
+                const data = await response.json();
+                
+                if (data.status === 'success') {
+                    renderHourlyAnalytics(data.analytics);
+                } else {
+                    document.getElementById('hourly-analytics-content').innerHTML = `
+                        <div class="text-center py-12 text-red-500">
+                            <p>Error loading analytics: ${data.message || 'Unknown error'}</p>
+                        </div>
+                    `;
+                }
+            } catch (error) {
+                console.error('Error loading hourly analytics:', error);
+                document.getElementById('hourly-analytics-content').innerHTML = `
+                    <div class="text-center py-12 text-red-500">
+                        <p>Failed to load hourly analytics</p>
+                    </div>
+                `;
+            }
+        }
+
+        // Render hourly analytics with filters and sorting
+        function renderHourlyAnalytics(analytics) {
+            const dateFilter = document.getElementById('analytics-date-filter').value;
+            const sortBy = document.getElementById('analytics-sort').value;
+            const filterType = document.getElementById('analytics-filter').value;
+            
+            // Apply date filter
+            let filtered = analytics.filter(item => {
+                const itemDate = new Date(item.hour);
+                const now = new Date();
+                const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+                const yesterday = new Date(today);
+                yesterday.setDate(yesterday.getDate() - 1);
+                
+                switch(dateFilter) {
+                    case 'today':
+                        return itemDate >= today;
+                    case 'yesterday':
+                        return itemDate >= yesterday && itemDate < today;
+                    case 'last7days':
+                        const last7days = new Date(today);
+                        last7days.setDate(last7days.getDate() - 7);
+                        return itemDate >= last7days;
+                    case 'last30days':
+                        const last30days = new Date(today);
+                        last30days.setDate(last30days.getDate() - 30);
+                        return itemDate >= last30days;
+                    default:
+                        return true;
+                }
+            });
+            
+            // Apply limit filter
+            if (filterType === 'with-limit') {
+                filtered = filtered.filter(item => item.hourly_limit_count > 0);
+            } else if (filterType === 'without-limit') {
+                filtered = filtered.filter(item => item.hourly_limit_count === 0);
+            }
+            
+            // Apply sorting
+            filtered.sort((a, b) => {
+                switch(sortBy) {
+                    case 'hour-desc':
+                        return new Date(b.hour) - new Date(a.hour);
+                    case 'hour-asc':
+                        return new Date(a.hour) - new Date(b.hour);
+                    case 'votes-desc':
+                        return b.successful_votes - a.successful_votes;
+                    case 'votes-asc':
+                        return a.successful_votes - b.successful_votes;
+                    default:
+                        return new Date(b.hour) - new Date(a.hour);
+                }
+            });
+            
+            const content = document.getElementById('hourly-analytics-content');
+            
+            if (filtered.length === 0) {
+                content.innerHTML = `
+                    <div class="text-center py-12 text-gray-500">
+                        <svg class="w-16 h-16 mx-auto mb-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4"></path>
+                        </svg>
+                        <p>No data available for selected filters</p>
+                    </div>
+                `;
+                return;
+            }
+            
+            let html = `
+                <div class="overflow-x-auto">
+                    <table class="min-w-full divide-y divide-gray-200">
+                        <thead class="bg-gray-50">
+                            <tr>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Hour</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Total Attempts</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Successful Votes</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Failed Votes</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Hourly Limits</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Success Rate</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                            </tr>
+                        </thead>
+                        <tbody class="bg-white divide-y divide-gray-200">
+            `;
+            
+            filtered.forEach(item => {
+                const hourDate = new Date(item.hour);
+                const hourStr = hourDate.toLocaleString('en-US', { 
+                    month: 'short', 
+                    day: 'numeric', 
+                    hour: '2-digit', 
+                    minute: '2-digit',
+                    hour12: true 
+                });
+                
+                const successRate = item.total_attempts > 0 
+                    ? ((item.successful_votes / item.total_attempts) * 100).toFixed(1) 
+                    : 0;
+                
+                const hasLimit = item.hourly_limit_count > 0;
+                const statusBadge = hasLimit 
+                    ? `<span class="px-2 py-1 text-xs font-semibold rounded-full bg-red-100 text-red-800">Limit Reached (${item.votes_before_limit} votes)</span>`
+                    : `<span class="px-2 py-1 text-xs font-semibold rounded-full bg-green-100 text-green-800">No Limit</span>`;
+                
+                html += `
+                    <tr class="${hasLimit ? 'bg-red-50' : ''}">
+                        <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">${hourStr}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-700">${item.total_attempts}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-green-600 font-semibold">${item.successful_votes}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-red-600">${item.failed_votes}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm ${hasLimit ? 'text-red-600 font-semibold' : 'text-gray-500'}">${item.hourly_limit_count}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-700">${successRate}%</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm">${statusBadge}</td>
+                    </tr>
+                `;
+            });
+            
+            html += `
+                        </tbody>
+                    </table>
+                </div>
+                <div class="mt-4 text-sm text-gray-600 text-center">
+                    Showing ${filtered.length} hour(s)
+                </div>
+            `;
+            
+            content.innerHTML = html;
+        }
+
+        // Auto-refresh hourly analytics when tab is active
+        setInterval(() => {
+            const analyticsTab = document.getElementById('hourly-analytics-tab');
+            if (analyticsTab && analyticsTab.classList.contains('active')) {
+                loadHourlyAnalytics();
+            }
+        }, 30000); // Refresh every 30 seconds
 
         // Modal event listeners
         document.getElementById('cancel-login-btn').addEventListener('click', hideSaveLoginModal);
