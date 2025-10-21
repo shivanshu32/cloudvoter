@@ -731,6 +731,80 @@ def get_statistics():
             'message': str(e)
         }), 500
 
+@app.route('/api/logs', methods=['GET'])
+def get_recent_logs():
+    """Get recent logs from cloudvoter.log file"""
+    try:
+        # Get number of lines to fetch (default 1000)
+        lines = request.args.get('lines', 1000, type=int)
+        # Limit to max 5000 lines to prevent memory issues
+        lines = min(lines, 5000)
+        
+        log_file = 'cloudvoter.log'
+        
+        if not os.path.exists(log_file):
+            return jsonify({
+                'status': 'success',
+                'logs': [],
+                'message': 'Log file not found'
+            })
+        
+        # Read last N lines from log file efficiently
+        logs = []
+        try:
+            with open(log_file, 'r', encoding='utf-8', errors='ignore') as f:
+                # Use deque to efficiently keep only last N lines
+                from collections import deque
+                logs = list(deque(f, maxlen=lines))
+        except Exception as e:
+            logger.error(f"Error reading log file: {e}")
+            return jsonify({
+                'status': 'error',
+                'message': f'Error reading log file: {str(e)}'
+            }), 500
+        
+        # Format logs for frontend
+        formatted_logs = []
+        for log_line in logs:
+            log_line = log_line.strip()
+            if log_line:
+                # Extract timestamp and message
+                # Format: "2025-10-21 12:30:00,123 - module - LEVEL - message"
+                try:
+                    parts = log_line.split(' - ', 3)
+                    if len(parts) >= 4:
+                        timestamp = parts[0]
+                        message = parts[3]
+                    else:
+                        timestamp = ''
+                        message = log_line
+                    
+                    formatted_logs.append({
+                        'timestamp': timestamp,
+                        'message': message,
+                        'full': log_line
+                    })
+                except:
+                    # If parsing fails, just use the whole line
+                    formatted_logs.append({
+                        'timestamp': '',
+                        'message': log_line,
+                        'full': log_line
+                    })
+        
+        return jsonify({
+            'status': 'success',
+            'logs': formatted_logs,
+            'count': len(formatted_logs)
+        })
+        
+    except Exception as e:
+        logger.error(f"❌ Error getting logs: {e}")
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        }), 500
+
 @app.route('/api/sessions', methods=['GET'])
 def get_saved_sessions():
     """Get all saved sessions"""

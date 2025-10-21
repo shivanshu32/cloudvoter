@@ -1072,10 +1072,28 @@ class VoterInstance:
                         is_global_limit = any(pattern in page_content.lower() for pattern in GLOBAL_HOURLY_LIMIT_PATTERNS)
                         is_instance_cooldown = any(pattern in page_content.lower() for pattern in INSTANCE_COOLDOWN_PATTERNS)
                         
+                        # Find which pattern matched (for debugging)
+                        matched_global_pattern = None
+                        matched_instance_pattern = None
+                        if is_global_limit:
+                            for pattern in GLOBAL_HOURLY_LIMIT_PATTERNS:
+                                if pattern in page_content.lower():
+                                    matched_global_pattern = pattern
+                                    break
+                        if is_instance_cooldown:
+                            for pattern in INSTANCE_COOLDOWN_PATTERNS:
+                                if pattern in page_content.lower():
+                                    matched_instance_pattern = pattern
+                                    break
+                        
                         if is_global_limit:
                             logger.warning(f"[GLOBAL_LIMIT] Instance #{self.instance_id} detected GLOBAL hourly limit - will pause ALL instances")
+                            logger.warning(f"[GLOBAL_LIMIT] Matched pattern: '{matched_global_pattern}'")
+                            logger.warning(f"[GLOBAL_LIMIT] Cooldown message: {cooldown_message}")
                         elif is_instance_cooldown:
                             logger.info(f"[INSTANCE_COOLDOWN] Instance #{self.instance_id} in instance-specific cooldown (30 min) - only this instance affected")
+                            logger.info(f"[INSTANCE_COOLDOWN] Matched pattern: '{matched_instance_pattern}'")
+                            logger.info(f"[INSTANCE_COOLDOWN] Cooldown message: {cooldown_message}")
                         
                         # Log cooldown to CSV with comprehensive data
                         self.vote_logger.log_vote_attempt(
@@ -1321,10 +1339,28 @@ class VoterInstance:
                     is_global_limit = any(pattern in page_content.lower() for pattern in GLOBAL_HOURLY_LIMIT_PATTERNS)
                     is_instance_cooldown = any(pattern in page_content.lower() for pattern in INSTANCE_COOLDOWN_PATTERNS)
                     
+                    # Find which pattern matched (for debugging)
+                    matched_global_pattern = None
+                    matched_instance_pattern = None
+                    if is_global_limit:
+                        for pattern in GLOBAL_HOURLY_LIMIT_PATTERNS:
+                            if pattern in page_content.lower():
+                                matched_global_pattern = pattern
+                                break
+                    if is_instance_cooldown:
+                        for pattern in INSTANCE_COOLDOWN_PATTERNS:
+                            if pattern in page_content.lower():
+                                matched_instance_pattern = pattern
+                                break
+                    
                     if is_global_limit:
                         logger.warning(f"[GLOBAL_LIMIT] Instance #{self.instance_id} detected GLOBAL hourly limit (fallback) - will pause ALL instances")
+                        logger.warning(f"[GLOBAL_LIMIT] Matched pattern: '{matched_global_pattern}'")
+                        logger.warning(f"[GLOBAL_LIMIT] Cooldown message: {cooldown_message}")
                     elif is_instance_cooldown:
                         logger.info(f"[INSTANCE_COOLDOWN] Instance #{self.instance_id} in instance-specific cooldown (fallback) - only this instance affected")
+                        logger.info(f"[INSTANCE_COOLDOWN] Matched pattern: '{matched_instance_pattern}'")
+                        logger.info(f"[INSTANCE_COOLDOWN] Cooldown message: {cooldown_message}")
                     
                     # Log cooldown to CSV with comprehensive data
                     self.vote_logger.log_vote_attempt(
@@ -1507,8 +1543,23 @@ class VoterInstance:
                         is_global_limit = any(pattern in page_content.lower() for pattern in GLOBAL_HOURLY_LIMIT_PATTERNS)
                         is_instance_cooldown = any(pattern in page_content.lower() for pattern in INSTANCE_COOLDOWN_PATTERNS)
                         
+                        # Find which pattern matched (for debugging)
+                        matched_global_pattern = None
+                        matched_instance_pattern = None
+                        if is_global_limit:
+                            for pattern in GLOBAL_HOURLY_LIMIT_PATTERNS:
+                                if pattern in page_content.lower():
+                                    matched_global_pattern = pattern
+                                    break
+                        if is_instance_cooldown:
+                            for pattern in INSTANCE_COOLDOWN_PATTERNS:
+                                if pattern in page_content.lower():
+                                    matched_instance_pattern = pattern
+                                    break
+                        
                         if is_global_limit:
                             logger.warning(f"[GLOBAL_LIMIT] Instance #{self.instance_id} detected GLOBAL hourly limit - will pause ALL instances")
+                            logger.warning(f"[GLOBAL_LIMIT] Matched pattern: '{matched_global_pattern}'")
                             
                             # Set proper status and failure type
                             self.status = "⏳ Hourly Limit - Paused"

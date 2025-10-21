@@ -732,25 +732,80 @@
             }
         }
         
-        // Restore logs from localStorage
-        function restoreLogs() {
+        // Restore logs from server (fetches from cloudvoter.log file)
+        async function restoreLogs() {
             try {
-                const savedLogs = localStorage.getItem('cloudvoter_logs');
-                if (savedLogs) {
-                    const logs = JSON.parse(savedLogs);
-                    if (logs.length > 0) {
-                        logsContainer.innerHTML = '';
-                        logs.forEach(logText => {
-                            const logEntry = document.createElement('div');
-                            logEntry.className = 'log-entry';
-                            logEntry.textContent = logText;
-                            logsContainer.appendChild(logEntry);
-                        });
-                        logsContainer.scrollTop = logsContainer.scrollHeight;
+                console.log('[LOGS] Fetching logs from server...');
+                
+                // Fetch logs from server API
+                const response = await fetch(`${API_URL}/api/logs?lines=1000`);
+                const data = await response.json();
+                
+                if (data.status === 'success' && data.logs && data.logs.length > 0) {
+                    console.log(`[LOGS] Loaded ${data.logs.length} logs from server`);
+                    
+                    // Clear container
+                    logsContainer.innerHTML = '';
+                    
+                    // Add each log entry
+                    data.logs.forEach(log => {
+                        const logEntry = document.createElement('div');
+                        logEntry.className = 'log-entry';
+                        // Use timestamp if available, otherwise use full log line
+                        if (log.timestamp) {
+                            logEntry.textContent = `[${log.timestamp}] ${log.message}`;
+                        } else {
+                            logEntry.textContent = log.message;
+                        }
+                        logsContainer.appendChild(logEntry);
+                    });
+                    
+                    // Scroll to bottom
+                    logsContainer.scrollTop = logsContainer.scrollHeight;
+                    
+                    // Save to localStorage for offline access
+                    saveLogs();
+                } else {
+                    console.log('[LOGS] No logs found on server, trying localStorage...');
+                    
+                    // Fallback to localStorage if server has no logs
+                    const savedLogs = localStorage.getItem('cloudvoter_logs');
+                    if (savedLogs) {
+                        const logs = JSON.parse(savedLogs);
+                        if (logs.length > 0) {
+                            logsContainer.innerHTML = '';
+                            logs.forEach(logText => {
+                                const logEntry = document.createElement('div');
+                                logEntry.className = 'log-entry';
+                                logEntry.textContent = logText;
+                                logsContainer.appendChild(logEntry);
+                            });
+                            logsContainer.scrollTop = logsContainer.scrollHeight;
+                        }
                     }
                 }
             } catch (error) {
-                console.error('Error restoring logs:', error);
+                console.error('[LOGS] Error fetching logs from server:', error);
+                
+                // Fallback to localStorage on error
+                try {
+                    const savedLogs = localStorage.getItem('cloudvoter_logs');
+                    if (savedLogs) {
+                        const logs = JSON.parse(savedLogs);
+                        if (logs.length > 0) {
+                            logsContainer.innerHTML = '';
+                            logs.forEach(logText => {
+                                const logEntry = document.createElement('div');
+                                logEntry.className = 'log-entry';
+                                logEntry.textContent = logText;
+                                logsContainer.appendChild(logEntry);
+                            });
+                            logsContainer.scrollTop = logsContainer.scrollHeight;
+                        }
+                    }
+                } catch (e) {
+                    console.error('[LOGS] Error restoring from localStorage:', e);
+                }
             }
         }
 
