@@ -1650,40 +1650,71 @@ class VoterInstance:
             if self.page:
                 try:
                     await asyncio.wait_for(self.page.close(), timeout=5.0)
-                except (asyncio.TimeoutError, Exception) as e:
-                    logger.warning(f"[CLEANUP] Instance #{self.instance_id} page close timeout/error: {e}")
+                except asyncio.TimeoutError:
+                    logger.warning(f"[CLEANUP] Instance #{self.instance_id} page close timeout")
+                except Exception as e:
+                    # Catch InvalidStateError and other Playwright errors
+                    error_type = type(e).__name__
+                    if 'InvalidStateError' in error_type or 'TargetClosedError' in error_type:
+                        logger.warning(f"[CLEANUP] Instance #{self.instance_id} page already closed ({error_type})")
+                    else:
+                        logger.warning(f"[CLEANUP] Instance #{self.instance_id} page close error: {e}")
                 finally:
                     self.page = None
             
             if self.context:
                 try:
                     await asyncio.wait_for(self.context.close(), timeout=10.0)
-                except (asyncio.TimeoutError, Exception) as e:
-                    logger.warning(f"[CLEANUP] Instance #{self.instance_id} context close timeout/error: {e}")
+                except asyncio.TimeoutError:
+                    logger.warning(f"[CLEANUP] Instance #{self.instance_id} context close timeout")
+                except Exception as e:
+                    error_type = type(e).__name__
+                    if 'InvalidStateError' in error_type or 'TargetClosedError' in error_type:
+                        logger.warning(f"[CLEANUP] Instance #{self.instance_id} context already closed ({error_type})")
+                    else:
+                        logger.warning(f"[CLEANUP] Instance #{self.instance_id} context close error: {e}")
                 finally:
                     self.context = None
             
             if self.browser:
                 try:
                     await asyncio.wait_for(self.browser.close(), timeout=10.0)
-                except (asyncio.TimeoutError, Exception) as e:
-                    logger.warning(f"[CLEANUP] Instance #{self.instance_id} browser close timeout/error: {e}")
+                except asyncio.TimeoutError:
+                    logger.warning(f"[CLEANUP] Instance #{self.instance_id} browser close timeout")
+                except Exception as e:
+                    error_type = type(e).__name__
+                    if 'InvalidStateError' in error_type or 'TargetClosedError' in error_type:
+                        logger.warning(f"[CLEANUP] Instance #{self.instance_id} browser already closed ({error_type})")
+                    else:
+                        logger.warning(f"[CLEANUP] Instance #{self.instance_id} browser close error: {e}")
                 finally:
                     self.browser = None
             
             if self.playwright:
                 try:
                     await asyncio.wait_for(self.playwright.stop(), timeout=5.0)
-                except (asyncio.TimeoutError, Exception) as e:
-                    logger.warning(f"[CLEANUP] Instance #{self.instance_id} playwright stop timeout/error: {e}")
+                except asyncio.TimeoutError:
+                    logger.warning(f"[CLEANUP] Instance #{self.instance_id} playwright stop timeout")
+                except Exception as e:
+                    error_type = type(e).__name__
+                    if 'InvalidStateError' in error_type:
+                        logger.warning(f"[CLEANUP] Instance #{self.instance_id} playwright already stopped ({error_type})")
+                    else:
+                        logger.warning(f"[CLEANUP] Instance #{self.instance_id} playwright stop error: {e}")
                 finally:
                     self.playwright = None
+            
+            # Reset browser tracking
+            self.browser_start_time = None
+            self.browser_session_id = None
             
             self.status = "Cooldown - Browser Closed"
             logger.info(f"[CLEANUP] Instance #{self.instance_id} browser cleanup completed")
             
         except Exception as e:
             logger.error(f"[CLEANUP] Instance #{self.instance_id} browser close failed: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
             # Force cleanup even on error
             self.page = None
             self.context = None
