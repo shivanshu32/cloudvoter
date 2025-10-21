@@ -1086,7 +1086,13 @@ class VoterInstance:
                                     matched_instance_pattern = pattern
                                     break
                         
-                        if is_global_limit:
+                        # Special handling for proxy IP mismatch (retry in 5 min, not 31 min)
+                        if matched_instance_pattern == "someone has already voted out of this ip":
+                            self.last_failure_type = "proxy_ip_mismatch"
+                            logger.warning(f"[PROXY_IP_MISMATCH] Instance #{self.instance_id} - proxy assigned different IP that already voted")
+                            logger.warning(f"[PROXY_IP_MISMATCH] Will retry in 5 minutes with new IP")
+                            logger.warning(f"[PROXY_IP_MISMATCH] Message: {cooldown_message}")
+                        elif is_global_limit:
                             logger.warning(f"[GLOBAL_LIMIT] Instance #{self.instance_id} detected GLOBAL hourly limit - will pause ALL instances")
                             logger.warning(f"[GLOBAL_LIMIT] Matched pattern: '{matched_global_pattern}'")
                             logger.warning(f"[GLOBAL_LIMIT] Cooldown message: {cooldown_message}")
@@ -1626,7 +1632,12 @@ class VoterInstance:
                     await asyncio.sleep(RETRY_DELAY_COOLDOWN * 60)
                 else:
                     # Determine wait time based on failure type
-                    if self.last_failure_type == "ip_cooldown":
+                    if self.last_failure_type == "proxy_ip_mismatch":
+                        # Proxy assigned different IP that already voted - retry in 5 min
+                        wait_minutes = RETRY_DELAY_TECHNICAL
+                        self.status = f"🔄 Proxy IP mismatch ({wait_minutes} min)"
+                        logger.info(f"[CYCLE] Instance #{self.instance_id} proxy IP mismatch, retrying in {wait_minutes} minutes...")
+                    elif self.last_failure_type == "ip_cooldown":
                         # Hourly limit / cooldown - wait full cycle
                         wait_minutes = RETRY_DELAY_COOLDOWN
                         self.status = f"⏳ Cooldown ({wait_minutes} min)"

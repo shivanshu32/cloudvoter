@@ -80,8 +80,7 @@ FAILURE_PATTERNS = [
 # Only these patterns should trigger global pause of all instances
 GLOBAL_HOURLY_LIMIT_PATTERNS = [
     "hourly voting limit",  # Current message format
-    "hourly limit",         # Legacy format
-    "someone has already voted out of this ip"
+    "hourly limit"          # Legacy format
 ]
 
 # Instance-specific cooldown patterns (only affect the specific instance)
@@ -89,7 +88,8 @@ GLOBAL_HOURLY_LIMIT_PATTERNS = [
 INSTANCE_COOLDOWN_PATTERNS = [
     "please come back at your next voting time",  # 30-minute cooldown
     "already voted",  # Instance-specific
-    "wait before voting again"  # Instance-specific
+    "wait before voting again",  # Instance-specific
+    "someone has already voted out of this ip"  # Proxy assigned different IP that already voted
 ]
 
 # Browser monitoring configuration

@@ -1,16 +1,18 @@
-# Fix: False Positive Hourly Limit Detection
+# Fix: False Positive Hourly Limit Detection (Proxy IP Mismatch)
 
-## 🔴 **The Problems**
+## 🔴 **THE PROBLEM (13:13:38 PM - Oct 21, 2025)**
 
-### **Problem #1: False Positive Hourly Limit**
+**Instance #8 triggered FALSE POSITIVE global hourly limit, pausing ALL 22 instances!**
+
 ```
-[11:17:44] [WAIT] Waiting for page to fully load and display error message...
-[11:17:49] [VOTE] Instance #12 hit cooldown/limit
-[11:17:49] [GLOBAL_LIMIT] Instance #12 detected GLOBAL hourly limit - will pause ALL instances
-[11:17:49] [HOURLY_LIMIT] 🚫 HOURLY LIMIT DETECTED - Pausing ALL instances
+[1:13:38 PM] [GLOBAL_LIMIT] Instance #8 detected GLOBAL hourly limit - will pause ALL instances
+[1:13:38 PM] [GLOBAL_LIMIT] Matched pattern: 'someone has already voted out of this ip'
+[1:13:38 PM] [GLOBAL_LIMIT] Cooldown message: Someone has already voted out of this IP address: 119.13.233.198
+[1:13:38 PM] [HOURLY_LIMIT] 🚫 HOURLY LIMIT DETECTED - Pausing ALL instances
+[1:13:38 PM] [HOURLY_LIMIT] Paused 22 instances
 ```
 
-**Issue**: Script detected "global hourly limit" when there wasn't one, pausing ALL instances unnecessarily.
+**Issue**: Script paused ALL 22 instances when only Instance #8 should have retried.
 
 ### **Problem #2: Missing Logs**
 ```
