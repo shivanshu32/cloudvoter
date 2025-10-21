@@ -115,7 +115,7 @@ PROXY_503_CIRCUIT_BREAKER_THRESHOLD = 3  # Consecutive 503s before pausing
 PROXY_503_PAUSE_DURATION = 60  # Seconds to pause after circuit breaker trips
 
 # Session scanning configuration
-SESSION_SCAN_INTERVAL = 60  # Seconds between saved session scans (reduced from ~38s)
+SESSION_SCAN_INTERVAL = 30  # Seconds between saved session scans (check more frequently for ready instances)
 
 # Logging configuration
 LOG_LEVEL = "INFO"

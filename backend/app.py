@@ -86,7 +86,7 @@ def init_event_loop():
     """Initialize event loop thread"""
     global loop_thread
     if loop_thread is None or not loop_thread.is_alive():
-        loop_thread = Thread(target=start_event_loop, daemon=True)
+        loop_thread = Thread(target=start_event_loop, daemon=False)  # Non-daemon to keep process alive
         loop_thread.start()
         logger.info("✅ Event loop thread started")
 
@@ -1643,9 +1643,16 @@ def auto_start_monitoring():
                 
                 loop_count = 0
                 last_scan_time = 0
+                last_heartbeat = time.time()
                 while monitoring_active:
                     try:
                         loop_count += 1
+                        
+                        # Heartbeat logging every 60 seconds to detect if loop is alive
+                        current_time_heartbeat = time.time()
+                        if current_time_heartbeat - last_heartbeat >= 60:
+                            logger.info(f"💓 Monitoring loop heartbeat - Loop #{loop_count}, Active instances: {len(voter_system.active_instances) if voter_system else 0}")
+                            last_heartbeat = current_time_heartbeat
                         
                         # Emit status update (with app context for thread-safe emission)
                         try:
@@ -1707,12 +1714,15 @@ def auto_start_monitoring():
                                     if ready_instances:
                                         logger.info(f"🔍 Found {len(ready_instances)} ready instances")
                                         
+                                        # Launch instances one at a time to prevent memory overload
+                                        # The scan will run again in SESSION_SCAN_INTERVAL seconds
                                         launched = False
                                         for instance_info in ready_instances:
                                             success = await launch_instance_from_session(instance_info)
                                             if success:
                                                 launched = True
-                                                break
+                                                logger.info(f"✅ Launched instance #{instance_info['instance_id']}, {len(ready_instances)-1} remaining")
+                                                break  # Launch one at a time to prevent memory overload
                                         
                                         if launched:
                                             await asyncio.sleep(5)
@@ -1756,8 +1766,8 @@ if __name__ == '__main__':
     logger.info("🚀 Starting CloudVoter Backend Server...")
     logger.info(f"📍 Server will be available at http://localhost:5000")
     
-    # Start auto-monitoring in background thread
-    auto_start_thread = Thread(target=auto_start_monitoring, daemon=True)
+    # Start auto-monitoring in background thread (non-daemon to keep process alive)
+    auto_start_thread = Thread(target=auto_start_monitoring, daemon=False)
     auto_start_thread.start()
     
     # Run with SocketIO
