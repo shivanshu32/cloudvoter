@@ -443,6 +443,7 @@
             
             socket.on('statistics_update', (data) => {
                 // Update statistics in real-time via Socket.IO
+                console.log('[STATS] Socket.IO update received:', data);
                 document.getElementById('stat-total').textContent = data.total_attempts || 0;
                 document.getElementById('stat-success').textContent = data.successful_votes || 0;
                 document.getElementById('stat-failed').textContent = data.failed_votes || 0;
@@ -733,12 +734,13 @@
                 const response = await fetch(`${API_URL}/api/statistics`);
                 const data = await response.json();
                 
+                console.log('[STATS] API update received:', data);
                 document.getElementById('stat-total').textContent = data.total_attempts || 0;
                 document.getElementById('stat-success').textContent = data.successful_votes || 0;
                 document.getElementById('stat-failed').textContent = data.failed_votes || 0;
                 document.getElementById('stat-active').textContent = data.active_instances || 0;
             } catch (error) {
-                console.error('Error updating statistics:', error);
+                console.error('[STATS] Error updating statistics:', error);
             }
         }
 

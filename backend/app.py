@@ -1570,76 +1570,91 @@ def auto_start_monitoring():
                 loop_count = 0
                 last_scan_time = 0
                 while monitoring_active:
-                    loop_count += 1
-                    
-                    # Emit status update
-                    socketio.emit('status_update', {
-                        'monitoring_active': True,
-                        'loop_count': loop_count,
-                        'active_instances': len(voter_system.active_instances) if voter_system else 0
-                    })
-                    
-                    # Emit statistics update
                     try:
-                        stats = vote_logger.get_statistics()
-                        stats['active_instances'] = len(voter_system.active_instances) if voter_system else 0
-                        socketio.emit('statistics_update', stats)
-                    except Exception as e:
-                        logger.error(f"Error emitting statistics: {e}")
-                    
-                    # Emit instance updates
-                    try:
-                        if voter_system:
-                            instances = []
-                            for ip, instance in voter_system.active_instances.items():
-                                time_info = instance.get_time_until_next_vote()
-                                instances.append({
-                                    'instance_id': getattr(instance, 'instance_id', None),
-                                    'ip': ip,
-                                    'status': getattr(instance, 'status', 'Unknown'),
-                                    'is_paused': getattr(instance, 'is_paused', False),
-                                    'waiting_for_login': getattr(instance, 'waiting_for_login', False),
-                                    'vote_count': getattr(instance, 'vote_count', 0),
-                                    'seconds_remaining': time_info['seconds_remaining'],
-                                    'next_vote_time': time_info['next_vote_time'],
-                                    'last_vote_time': getattr(instance, 'last_vote_time', None).isoformat() if getattr(instance, 'last_vote_time', None) else None,
-                                    'last_successful_vote': getattr(instance, 'last_successful_vote', None).isoformat() if getattr(instance, 'last_successful_vote', None) else None,
-                                    'last_attempted_vote': getattr(instance, 'last_attempted_vote', None).isoformat() if getattr(instance, 'last_attempted_vote', None) else None,
-                                    'last_failure_reason': getattr(instance, 'last_failure_reason', None),
-                                    'last_failure_type': getattr(instance, 'last_failure_type', None)
-                                })
-                            socketio.emit('instances_update', {'instances': instances})
-                    except Exception as e:
-                        logger.error(f"Error emitting instances update: {e}")
-                    
-                    # Check for ready instances
-                    current_time = time.time()
-                    if current_time - last_scan_time >= SESSION_SCAN_INTERVAL:
-                        last_scan_time = current_time
+                        loop_count += 1
                         
+                        # Emit status update (with app context for thread-safe emission)
                         try:
-                            if voter_system and voter_system.global_hourly_limit:
-                                logger.debug(f"⏰ Global hourly limit active - skipping instance launch")
-                            else:
-                                ready_instances = await check_ready_instances()
-                                
-                                if ready_instances:
-                                    logger.info(f"🔍 Found {len(ready_instances)} ready instances")
-                                    
-                                    launched = False
-                                    for instance_info in ready_instances:
-                                        success = await launch_instance_from_session(instance_info)
-                                        if success:
-                                            launched = True
-                                            break
-                                    
-                                    if launched:
-                                        await asyncio.sleep(5)
-                            
+                            with app.app_context():
+                                socketio.emit('status_update', {
+                                    'monitoring_active': True,
+                                    'loop_count': loop_count,
+                                    'active_instances': len(voter_system.active_instances) if voter_system else 0
+                                }, broadcast=True)
                         except Exception as e:
-                            logger.error(f"❌ Error in monitoring loop: {e}")
-                    
-                    await asyncio.sleep(10)
+                            logger.error(f"Error emitting status update: {e}")
+                        
+                        # Emit statistics update (with app context for thread-safe emission)
+                        try:
+                            stats = vote_logger.get_statistics()
+                            stats['active_instances'] = len(voter_system.active_instances) if voter_system else 0
+                            with app.app_context():
+                                socketio.emit('statistics_update', stats, broadcast=True)
+                        except Exception as e:
+                            logger.error(f"Error emitting statistics: {e}")
+                        
+                        # Emit instance updates (with app context for thread-safe emission)
+                        try:
+                            if voter_system:
+                                instances = []
+                                for ip, instance in voter_system.active_instances.items():
+                                    time_info = instance.get_time_until_next_vote()
+                                    instances.append({
+                                        'instance_id': getattr(instance, 'instance_id', None),
+                                        'ip': ip,
+                                        'status': getattr(instance, 'status', 'Unknown'),
+                                        'is_paused': getattr(instance, 'is_paused', False),
+                                        'waiting_for_login': getattr(instance, 'waiting_for_login', False),
+                                        'vote_count': getattr(instance, 'vote_count', 0),
+                                        'seconds_remaining': time_info['seconds_remaining'],
+                                        'next_vote_time': time_info['next_vote_time'],
+                                        'last_vote_time': getattr(instance, 'last_vote_time', None).isoformat() if getattr(instance, 'last_vote_time', None) else None,
+                                        'last_successful_vote': getattr(instance, 'last_successful_vote', None).isoformat() if getattr(instance, 'last_successful_vote', None) else None,
+                                        'last_attempted_vote': getattr(instance, 'last_attempted_vote', None).isoformat() if getattr(instance, 'last_attempted_vote', None) else None,
+                                        'last_failure_reason': getattr(instance, 'last_failure_reason', None),
+                                        'last_failure_type': getattr(instance, 'last_failure_type', None)
+                                    })
+                                with app.app_context():
+                                    socketio.emit('instances_update', {'instances': instances}, broadcast=True)
+                        except Exception as e:
+                            logger.error(f"Error emitting instances update: {e}")
+                        
+                        # Check for ready instances
+                        current_time = time.time()
+                        if current_time - last_scan_time >= SESSION_SCAN_INTERVAL:
+                            last_scan_time = current_time
+                            
+                            try:
+                                if voter_system and voter_system.global_hourly_limit:
+                                    logger.debug(f"⏰ Global hourly limit active - skipping instance launch")
+                                else:
+                                    ready_instances = await check_ready_instances()
+                                    
+                                    if ready_instances:
+                                        logger.info(f"🔍 Found {len(ready_instances)} ready instances")
+                                        
+                                        launched = False
+                                        for instance_info in ready_instances:
+                                            success = await launch_instance_from_session(instance_info)
+                                            if success:
+                                                launched = True
+                                                break
+                                        
+                                        if launched:
+                                            await asyncio.sleep(5)
+                                
+                            except Exception as e:
+                                logger.error(f"❌ Error checking ready instances: {e}")
+                                logger.error(traceback.format_exc())
+                        
+                        await asyncio.sleep(10)
+                        
+                    except Exception as e:
+                        # CRITICAL: Catch ANY error in loop iteration to prevent loop exit
+                        logger.error(f"❌ Error in monitoring loop iteration: {e}")
+                        logger.error(traceback.format_exc())
+                        # Sleep and continue - don't exit the loop!
+                        await asyncio.sleep(10)
                 
                 logger.info("⏹ Monitoring loop stopped")
                 

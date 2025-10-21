@@ -129,8 +129,47 @@ class VoterInstance:
         Handles both:
         - Successful votes: 31 minute cooldown
         - Failed votes: 5 min (technical) or 31 min (IP cooldown) retry delay
+        - Global hourly limit: All instances resume at same time
         """
         current_time = datetime.now()
+        
+        # PRIORITY: Check if global hourly limit is active
+        if self.voter_manager and self.voter_manager.global_hourly_limit:
+            if self.voter_manager.global_reactivation_time:
+                try:
+                    reactivation_dt = datetime.fromisoformat(self.voter_manager.global_reactivation_time)
+                    global_time_diff = (reactivation_dt - current_time).total_seconds()
+                    global_seconds = max(0, int(global_time_diff))
+                    
+                    # Calculate individual next vote time (31 min after last vote)
+                    individual_seconds = 0
+                    individual_next_time = None
+                    
+                    if self.last_vote_time:
+                        individual_next_time = self.last_vote_time + timedelta(minutes=31)
+                        individual_time_diff = (individual_next_time - current_time).total_seconds()
+                        individual_seconds = max(0, int(individual_time_diff))
+                    
+                    # Use whichever is LATER (can't vote until both conditions met)
+                    if individual_seconds > global_seconds:
+                        # Individual cooldown is longer - use that
+                        return {
+                            'seconds_remaining': individual_seconds,
+                            'next_vote_time': individual_next_time.isoformat(),
+                            'status': 'cooldown' if individual_seconds > 0 else 'ready',
+                            'retry_type': 'individual_cooldown_during_global_limit'
+                        }
+                    else:
+                        # Global limit is longer or equal - use that
+                        return {
+                            'seconds_remaining': global_seconds,
+                            'next_vote_time': self.voter_manager.global_reactivation_time,
+                            'status': 'global_hourly_limit' if global_seconds > 0 else 'ready',
+                            'retry_type': 'global_limit'
+                        }
+                except Exception as e:
+                    logger.debug(f"[TIME] Error parsing global reactivation time: {e}")
+                    # Fall through to normal calculation
         
         # Check if there's a recent failure that needs retry
         if self.last_attempted_vote and self.last_failure_type:
@@ -1101,44 +1140,61 @@ class VoterInstance:
                         login_button_found, login_button_text = await self.check_login_button_exists()
                         
                         if login_button_found:
-                            logger.error(f"[LOGIN_REQUIRED] Instance #{self.instance_id} detected actual 'Login with Google' BUTTON!")
-                            logger.error(f"[LOGIN_REQUIRED] Button text: '{login_button_text}'")
-                            logger.error(f"[LOGIN_REQUIRED] Instance #{self.instance_id} will be EXCLUDED from voting cycles until script restart")
+                            # SAFEGUARD: Check if this might be a false positive
+                            # If instance just reopened browser (within 30 seconds), be cautious
+                            browser_age = 0
+                            if self.browser_start_time:
+                                browser_age = (datetime.now() - self.browser_start_time).total_seconds()
                             
-                            # Mark instance as requiring login and exclude from cycles
-                            self.login_detected = True
-                            self.login_detected_time = datetime.now()
-                            self.login_detection_reason = f"Found login button: {login_button_text}"
-                            self.excluded_from_cycles = True
-                            self.status = "🔒 Login Required - EXCLUDED"
-                            
-                            # Pause the instance permanently
-                            self.is_paused = True
-                            self.pause_event.clear()
-                            
-                            # Close browser
-                            await self.close_browser()
-                            
-                            # Log the exclusion
-                            self.vote_logger.log_vote_attempt(
-                                instance_id=self.instance_id,
-                                instance_name=f"Instance_{self.instance_id}",
-                                time_of_click=click_time,
-                                status="failed",
-                                voting_url=self.target_url,
-                                cooldown_message="",
-                                failure_type="login_required",
-                                failure_reason=f"Login button found: {login_button_text}",
-                                initial_vote_count=initial_count,
-                                final_vote_count=final_count,
-                                proxy_ip=self.proxy_ip,
-                                session_id=self.session_id or "",
-                                click_attempts=click_attempts,
-                                error_message=login_button_text,
-                                browser_closed=True
-                            )
-                            
-                            return False
+                            if browser_age < 30 and self.vote_count > 0:
+                                # Instance has voted before and browser just reopened - likely false positive
+                                logger.warning(f"[LOGIN_CHECK] Instance #{self.instance_id} detected login button but browser just reopened ({browser_age:.0f}s ago)")
+                                logger.warning(f"[LOGIN_CHECK] Instance #{self.instance_id} has {self.vote_count} previous votes - treating as temporary issue")
+                                # Don't exclude, just fail this attempt and retry
+                                failure_reason = "Login button detected (possible false positive - browser just reopened)"
+                                logger.warning(f"[FAILURE] {failure_reason}")
+                                # Continue to normal failure handling below (don't return here)
+                            else:
+                                # Genuine login required - EXCLUDE instance
+                                logger.error(f"[LOGIN_REQUIRED] Instance #{self.instance_id} detected actual 'Login with Google' BUTTON!")
+                                logger.error(f"[LOGIN_REQUIRED] Button text: '{login_button_text}'")
+                                logger.error(f"[LOGIN_REQUIRED] Browser age: {browser_age:.0f}s, Vote count: {self.vote_count}")
+                                logger.error(f"[LOGIN_REQUIRED] Instance #{self.instance_id} will be EXCLUDED from voting cycles until script restart")
+                                
+                                # Mark instance as requiring login and exclude from cycles
+                                self.login_detected = True
+                                self.login_detected_time = datetime.now()
+                                self.login_detection_reason = f"Found login button: {login_button_text}"
+                                self.excluded_from_cycles = True
+                                self.status = "🔒 Login Required - EXCLUDED"
+                                
+                                # Pause the instance permanently
+                                self.is_paused = True
+                                self.pause_event.clear()
+                                
+                                # Close browser
+                                await self.close_browser()
+                                
+                                # Log the exclusion
+                                self.vote_logger.log_vote_attempt(
+                                    instance_id=self.instance_id,
+                                    instance_name=f"Instance_{self.instance_id}",
+                                    time_of_click=click_time,
+                                    status="failed",
+                                    voting_url=self.target_url,
+                                    cooldown_message="",
+                                    failure_type="login_required",
+                                    failure_reason=f"Login button found: {login_button_text}",
+                                    initial_vote_count=initial_count,
+                                    final_vote_count=final_count,
+                                    proxy_ip=self.proxy_ip,
+                                    session_id=self.session_id or "",
+                                    click_attempts=click_attempts,
+                                    error_message=login_button_text,
+                                    browser_closed=True
+                                )
+                                
+                                return False  # Return immediately - don't retry
                         
                         # Determine specific failure reason
                         if button_still_visible:
@@ -1427,6 +1483,11 @@ class VoterInstance:
                         logger.error(f"[CYCLE] Instance #{self.instance_id} browser re-initialization failed, retrying...")
                         await asyncio.sleep(30)
                         continue
+                    
+                    # CRITICAL: Wait for browser to fully stabilize after reopen
+                    # This prevents false positive login detection during page load
+                    logger.debug(f"[CYCLE] Instance #{self.instance_id} waiting for browser to stabilize...")
+                    await asyncio.sleep(3)
                 
                 # Navigate to voting page
                 if not await self.navigate_to_voting_page():
@@ -1448,6 +1509,12 @@ class VoterInstance:
                         
                         if is_global_limit:
                             logger.warning(f"[GLOBAL_LIMIT] Instance #{self.instance_id} detected GLOBAL hourly limit - will pause ALL instances")
+                            
+                            # Set proper status and failure type
+                            self.status = "⏳ Hourly Limit - Paused"
+                            self.last_failure_type = "ip_cooldown"
+                            self.last_failure_reason = "Global hourly limit detected"
+                            
                             await self.close_browser()
                             
                             # Trigger global hourly limit handling
@@ -1461,6 +1528,12 @@ class VoterInstance:
                             
                         elif is_instance_cooldown:
                             logger.info(f"[INSTANCE_COOLDOWN] Instance #{self.instance_id} in instance-specific cooldown (pre-vote) - only this instance affected")
+                            
+                            # Set proper status and failure type
+                            self.status = "⏳ Cooldown (31 min)"
+                            self.last_failure_type = "ip_cooldown"
+                            self.last_failure_reason = "Instance-specific cooldown detected"
+                            
                             await self.close_browser()
                             
                             # Don't trigger global pause, just close browser and continue cycle
@@ -1485,6 +1558,12 @@ class VoterInstance:
                     self.waiting_for_login = True
                     self.is_paused = True
                     self.pause_event.clear()
+                    continue
+                
+                # CRITICAL: Check if paused before attempting vote
+                if self.is_paused:
+                    logger.warning(f"[VOTE] Instance #{self.instance_id} is paused, skipping vote attempt")
+                    await asyncio.sleep(10)  # Wait a bit before checking again
                     continue
                 
                 # Attempt vote
@@ -2006,7 +2085,9 @@ class MultiInstanceVoter:
             
             while self.auto_unpause_active:
                 try:
-                    # Check all paused instances
+                    # Collect all instances ready to unpause
+                    instances_to_unpause = []
+                    
                     for ip, instance in list(self.active_instances.items()):
                         # Skip excluded instances (login required)
                         if instance.excluded_from_cycles:
@@ -2019,10 +2100,22 @@ class MultiInstanceVoter:
                             
                             # If cooldown expired and NOT in global hourly limit
                             if seconds_remaining == 0 and not self.global_hourly_limit:
-                                logger.info(f"[AUTO-UNPAUSE] Instance #{instance.instance_id} cooldown expired - auto-unpausing")
-                                instance.is_paused = False
-                                instance.pause_event.set()
-                                instance.status = "▶️ Resumed - Ready to Vote"
+                                instances_to_unpause.append(instance)
+                    
+                    # Unpause instances SEQUENTIALLY with delay to prevent simultaneous browser opens
+                    if instances_to_unpause:
+                        logger.info(f"[AUTO-UNPAUSE] Found {len(instances_to_unpause)} instances ready to unpause")
+                        
+                        for idx, instance in enumerate(instances_to_unpause, 1):
+                            logger.info(f"[AUTO-UNPAUSE] Instance #{instance.instance_id} cooldown expired - auto-unpausing ({idx}/{len(instances_to_unpause)})")
+                            instance.is_paused = False
+                            instance.pause_event.set()
+                            instance.status = "▶️ Resumed - Ready to Vote"
+                            
+                            # Add delay between unpauses to prevent simultaneous browser opens
+                            if idx < len(instances_to_unpause):
+                                logger.debug(f"[AUTO-UNPAUSE] Waiting {self.browser_launch_delay}s before next unpause...")
+                                await asyncio.sleep(self.browser_launch_delay)
                     
                     # Check every 30 seconds
                     await asyncio.sleep(30)
