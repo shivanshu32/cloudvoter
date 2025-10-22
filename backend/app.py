@@ -1685,7 +1685,7 @@ def auto_start_monitoring():
                                         'monitoring_active': True,
                                         'loop_count': loop_count,
                                         'active_instances': len(voter_system.active_instances) if voter_system else 0
-                                    }, broadcast=True)
+                                    })
                             except Exception as e:
                                 logger.error(f"Error emitting status update: {e}")
                             
@@ -1694,7 +1694,7 @@ def auto_start_monitoring():
                                 stats = vote_logger.get_statistics()
                                 stats['active_instances'] = len(voter_system.active_instances) if voter_system else 0
                                 with app.app_context():
-                                    socketio.emit('statistics_update', stats, broadcast=True)
+                                    socketio.emit('statistics_update', stats)
                             except Exception as e:
                                 logger.error(f"Error emitting statistics: {e}")
                             
@@ -1720,7 +1720,7 @@ def auto_start_monitoring():
                                             'last_failure_type': getattr(instance, 'last_failure_type', None)
                                         })
                                     with app.app_context():
-                                        socketio.emit('instances_update', {'instances': instances}, broadcast=True)
+                                        socketio.emit('instances_update', {'instances': instances})
                             except Exception as e:
                                 logger.error(f"Error emitting instances update: {e}")
                         
@@ -1738,15 +1738,15 @@ def auto_start_monitoring():
                                     if ready_instances:
                                         logger.info(f"🔍 Found {len(ready_instances)} ready instances")
                                         
-                                        # FIXED: Launch ALL ready instances with delay to prevent memory overload
+                                        # FIXED: Launch ALL ready instances with minimal delay
                                         launched_count = 0
                                         for instance_info in ready_instances:
                                             success = await launch_instance_from_session(instance_info)
                                             if success:
                                                 launched_count += 1
                                                 logger.info(f"✅ Launched instance #{instance_info['instance_id']}, {len(ready_instances)-launched_count} remaining")
-                                                # Small delay between launches to prevent memory spike
-                                                await asyncio.sleep(2)
+                                                # OPTIMIZED: Minimal delay (0.5s) for faster voting cycles
+                                                await asyncio.sleep(0.5)
                                         
                                         if launched_count > 0:
                                             logger.info(f"✅ Launched {launched_count} instances total")

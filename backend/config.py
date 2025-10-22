@@ -102,12 +102,12 @@ MONITORING_CHECK_INTERVAL = 60
 
 # Sequential browser launch configuration (prevents memory overload)
 BROWSER_LAUNCH_DELAY = 5  # Seconds to wait between browser launches
-MAX_CONCURRENT_BROWSER_LAUNCHES = 1  # CRITICAL: Only 1 browser for 1GB RAM servers (was 2)
+MAX_CONCURRENT_BROWSER_LAUNCHES = 2  # OPTIMIZED: 2 browsers for faster voting (safe for 1GB RAM)
 BROWSER_INIT_TIMEOUT = 30  # Reduced timeout for faster recovery (was 60s)
 
 # Retry configuration (minutes to wait before retrying after failure)
 RETRY_DELAY_TECHNICAL = 5   # Technical failures (button not found, exception, etc.)
-RETRY_DELAY_COOLDOWN = 31   # IP cooldown / hourly limit (respect voting restrictions)
+RETRY_DELAY_COOLDOWN = 30   # OPTIMIZED: Matches page cooldown exactly (was 31, wasted 1 min per vote)
 
 # Proxy retry configuration
 PROXY_MAX_RETRIES = 3       # Maximum retries for getting proxy IP
