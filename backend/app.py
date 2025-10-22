@@ -1675,51 +1675,54 @@ def auto_start_monitoring():
                             logger.info(f"💓 Monitoring loop heartbeat - Loop #{loop_count}, Active instances: {len(voter_system.active_instances) if voter_system else 0}")
                             last_heartbeat = current_time_heartbeat
                         
-                        # Emit status update (with app context for thread-safe emission)
-                        try:
-                            with app.app_context():
-                                socketio.emit('status_update', {
-                                    'monitoring_active': True,
-                                    'loop_count': loop_count,
-                                    'active_instances': len(voter_system.active_instances) if voter_system else 0
-                                })
-                        except Exception as e:
-                            logger.error(f"Error emitting status update: {e}")
-                        
-                        # Emit statistics update (with app context for thread-safe emission)
-                        try:
-                            stats = vote_logger.get_statistics()
-                            stats['active_instances'] = len(voter_system.active_instances) if voter_system else 0
-                            with app.app_context():
-                                socketio.emit('statistics_update', stats)
-                        except Exception as e:
-                            logger.error(f"Error emitting statistics: {e}")
-                        
-                        # Emit instance updates (with app context for thread-safe emission)
-                        try:
-                            if voter_system:
-                                instances = []
-                                for ip, instance in voter_system.active_instances.items():
-                                    time_info = instance.get_time_until_next_vote()
-                                    instances.append({
-                                        'instance_id': getattr(instance, 'instance_id', None),
-                                        'ip': ip,
-                                        'status': getattr(instance, 'status', 'Unknown'),
-                                        'is_paused': getattr(instance, 'is_paused', False),
-                                        'waiting_for_login': getattr(instance, 'waiting_for_login', False),
-                                        'vote_count': getattr(instance, 'vote_count', 0),
-                                        'seconds_remaining': time_info['seconds_remaining'],
-                                        'next_vote_time': time_info['next_vote_time'],
-                                        'last_vote_time': getattr(instance, 'last_vote_time', None).isoformat() if getattr(instance, 'last_vote_time', None) else None,
-                                        'last_successful_vote': getattr(instance, 'last_successful_vote', None).isoformat() if getattr(instance, 'last_successful_vote', None) else None,
-                                        'last_attempted_vote': getattr(instance, 'last_attempted_vote', None).isoformat() if getattr(instance, 'last_attempted_vote', None) else None,
-                                        'last_failure_reason': getattr(instance, 'last_failure_reason', None),
-                                        'last_failure_type': getattr(instance, 'last_failure_type', None)
-                                    })
+                        # OPTIMIZED: Emit Socket.IO updates every 60 seconds for 1GB RAM servers (reduce CPU)
+                        # Only emit every 6th loop iteration (10s × 6 = 60s)
+                        if loop_count % 6 == 0:
+                            # Emit status update (with app context for thread-safe emission)
+                            try:
                                 with app.app_context():
-                                    socketio.emit('instances_update', {'instances': instances})
-                        except Exception as e:
-                            logger.error(f"Error emitting instances update: {e}")
+                                    socketio.emit('status_update', {
+                                        'monitoring_active': True,
+                                        'loop_count': loop_count,
+                                        'active_instances': len(voter_system.active_instances) if voter_system else 0
+                                    }, broadcast=True)
+                            except Exception as e:
+                                logger.error(f"Error emitting status update: {e}")
+                            
+                            # Emit statistics update (with app context for thread-safe emission)
+                            try:
+                                stats = vote_logger.get_statistics()
+                                stats['active_instances'] = len(voter_system.active_instances) if voter_system else 0
+                                with app.app_context():
+                                    socketio.emit('statistics_update', stats, broadcast=True)
+                            except Exception as e:
+                                logger.error(f"Error emitting statistics: {e}")
+                            
+                            # Emit instance updates (with app context for thread-safe emission)
+                            try:
+                                if voter_system:
+                                    instances = []
+                                    for ip, instance in voter_system.active_instances.items():
+                                        time_info = instance.get_time_until_next_vote()
+                                        instances.append({
+                                            'instance_id': getattr(instance, 'instance_id', None),
+                                            'ip': ip,
+                                            'status': getattr(instance, 'status', 'Unknown'),
+                                            'is_paused': getattr(instance, 'is_paused', False),
+                                            'waiting_for_login': getattr(instance, 'waiting_for_login', False),
+                                            'vote_count': getattr(instance, 'vote_count', 0),
+                                            'seconds_remaining': time_info['seconds_remaining'],
+                                            'next_vote_time': time_info['next_vote_time'],
+                                            'last_vote_time': getattr(instance, 'last_vote_time', None).isoformat() if getattr(instance, 'last_vote_time', None) else None,
+                                            'last_successful_vote': getattr(instance, 'last_successful_vote', None).isoformat() if getattr(instance, 'last_successful_vote', None) else None,
+                                            'last_attempted_vote': getattr(instance, 'last_attempted_vote', None).isoformat() if getattr(instance, 'last_attempted_vote', None) else None,
+                                            'last_failure_reason': getattr(instance, 'last_failure_reason', None),
+                                            'last_failure_type': getattr(instance, 'last_failure_type', None)
+                                        })
+                                    with app.app_context():
+                                        socketio.emit('instances_update', {'instances': instances}, broadcast=True)
+                            except Exception as e:
+                                logger.error(f"Error emitting instances update: {e}")
                         
                         # Check for ready instances
                         current_time = time.time()
@@ -1735,18 +1738,19 @@ def auto_start_monitoring():
                                     if ready_instances:
                                         logger.info(f"🔍 Found {len(ready_instances)} ready instances")
                                         
-                                        # Launch instances one at a time to prevent memory overload
-                                        # The scan will run again in SESSION_SCAN_INTERVAL seconds
-                                        launched = False
+                                        # FIXED: Launch ALL ready instances with delay to prevent memory overload
+                                        launched_count = 0
                                         for instance_info in ready_instances:
                                             success = await launch_instance_from_session(instance_info)
                                             if success:
-                                                launched = True
-                                                logger.info(f"✅ Launched instance #{instance_info['instance_id']}, {len(ready_instances)-1} remaining")
-                                                break  # Launch one at a time to prevent memory overload
+                                                launched_count += 1
+                                                logger.info(f"✅ Launched instance #{instance_info['instance_id']}, {len(ready_instances)-launched_count} remaining")
+                                                # Small delay between launches to prevent memory spike
+                                                await asyncio.sleep(2)
                                         
-                                        if launched:
-                                            await asyncio.sleep(5)
+                                        if launched_count > 0:
+                                            logger.info(f"✅ Launched {launched_count} instances total")
+                                            await asyncio.sleep(3)
                                 
                             except Exception as e:
                                 logger.error(f"❌ Error checking ready instances: {e}")

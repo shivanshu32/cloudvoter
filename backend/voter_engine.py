@@ -398,11 +398,24 @@ class VoterInstance:
                 # Start Playwright
                 self.playwright = await async_playwright().start()
                 
-                # Browser launch arguments
+                # Browser launch arguments - OPTIMIZED FOR LOW MEMORY (1GB RAM)
                 browser_args = [
                     '--no-sandbox',
                     '--disable-blink-features=AutomationControlled',
-                    '--disable-dev-shm-usage'
+                    '--disable-dev-shm-usage',
+                    '--disable-gpu',
+                    '--single-process',
+                    '--disable-background-networking',
+                    '--disable-default-apps',
+                    '--disable-extensions',
+                    '--disable-sync',
+                    '--metrics-recording-only',
+                    '--mute-audio',
+                    '--no-first-run',
+                    '--safebrowsing-disable-auto-update',
+                    '--disable-background-timer-throttling',
+                    '--disable-backgrounding-occluded-windows',
+                    '--disable-renderer-backgrounding',
                 ]
                 
                 # Launch browser with proxy
@@ -519,11 +532,24 @@ class VoterInstance:
                 # Start Playwright
                 self.playwright = await async_playwright().start()
                 
-                # Browser launch arguments
+                # Browser launch arguments - OPTIMIZED FOR LOW MEMORY (1GB RAM)
                 browser_args = [
                     '--no-sandbox',
                     '--disable-blink-features=AutomationControlled',
-                    '--disable-dev-shm-usage'
+                    '--disable-dev-shm-usage',
+                    '--disable-gpu',
+                    '--single-process',
+                    '--disable-background-networking',
+                    '--disable-default-apps',
+                    '--disable-extensions',
+                    '--disable-sync',
+                    '--metrics-recording-only',
+                    '--mute-audio',
+                    '--no-first-run',
+                    '--safebrowsing-disable-auto-update',
+                    '--disable-background-timer-throttling',
+                    '--disable-backgrounding-occluded-windows',
+                    '--disable-renderer-backgrounding',
                 ]
                 
                 # Launch browser with proxy
@@ -1072,7 +1098,16 @@ class VoterInstance:
                     logger.info(f"[WAIT] Waiting for page to fully load and display error message...")
                     await asyncio.sleep(5)
                     
-                    page_content = await self.page.content()
+                    # CRITICAL: Add timeout to prevent indefinite hang
+                    try:
+                        page_content = await asyncio.wait_for(
+                            self.page.content(),
+                            timeout=10.0
+                        )
+                    except asyncio.TimeoutError:
+                        logger.error(f"[TIMEOUT] page.content() timeout after vote failure")
+                        await self.close_browser()
+                        return False
                     cooldown_message = ""
                     error_message_found = ""
                     
@@ -1340,7 +1375,16 @@ class VoterInstance:
                 # Fallback to text detection if vote count unavailable
                 logger.warning("[VOTE] Vote count verification unavailable - using text detection fallback")
                 
-                page_content = await self.page.content()
+                # CRITICAL: Add timeout to prevent indefinite hang
+                try:
+                    page_content = await asyncio.wait_for(
+                        self.page.content(),
+                        timeout=10.0
+                    )
+                except asyncio.TimeoutError:
+                    logger.error(f"[TIMEOUT] page.content() timeout in fallback detection")
+                    await self.close_browser()
+                    return False
                 
                 if any(pattern in page_content.lower() for pattern in ['thank you', 'success', 'counted']):
                     logger.warning(f"[VOTE] Text detection shows success (UNVERIFIED)")
@@ -1557,6 +1601,16 @@ class VoterInstance:
                 if self.excluded_from_cycles:
                     logger.warning(f"[EXCLUDED] Instance #{self.instance_id} is excluded from cycles (login required)")
                     logger.warning(f"[EXCLUDED] Instance #{self.instance_id} will remain paused until script restart")
+                    
+                    # CRITICAL: Close browser to free memory (250MB)
+                    # Essential for low-memory servers
+                    if self.browser:
+                        logger.warning(f"[EXCLUDED] Closing browser for excluded instance to free memory")
+                        try:
+                            await self.close_browser()
+                        except Exception as e:
+                            logger.error(f"[EXCLUDED] Error closing browser: {e}")
+                    
                     # Permanently pause this instance
                     await asyncio.sleep(3600)  # Sleep for 1 hour, then check again
                     continue
@@ -1622,6 +1676,14 @@ class VoterInstance:
                 # Navigate to voting page
                 if not await self.navigate_to_voting_page():
                     logger.warning(f"[CYCLE] Instance #{self.instance_id} navigation failed, retrying...")
+                    
+                    # CRITICAL: Close browser on navigation failure to prevent memory leak
+                    try:
+                        logger.warning(f"[CYCLE] Instance #{self.instance_id} closing browser after navigation failure...")
+                        await self.close_browser()
+                    except Exception as cleanup_error:
+                        logger.error(f"[CYCLE] Instance #{self.instance_id} browser cleanup failed: {cleanup_error}")
+                    
                     await asyncio.sleep(30)
                     continue
                 
@@ -1631,7 +1693,11 @@ class VoterInstance:
                     
                     # Get page content to determine if global or instance-specific
                     try:
-                        page_content = await self.page.content()
+                        # CRITICAL: Add timeout to prevent indefinite hang
+                        page_content = await asyncio.wait_for(
+                            self.page.content(),
+                            timeout=10.0
+                        )
                         
                         # Check if this is a GLOBAL hourly limit or INSTANCE-SPECIFIC cooldown
                         is_global_limit = any(pattern in page_content.lower() for pattern in GLOBAL_HOURLY_LIMIT_PATTERNS)
@@ -1703,6 +1769,15 @@ class VoterInstance:
                     self.waiting_for_login = True
                     self.is_paused = True
                     self.pause_event.clear()
+                    
+                    # CRITICAL: Close browser to free memory (250MB)
+                    if self.browser:
+                        logger.warning(f"[CYCLE] Closing browser for login-required instance to free memory")
+                        try:
+                            await self.close_browser()
+                        except Exception as e:
+                            logger.error(f"[CYCLE] Error closing browser: {e}")
+                    
                     continue
                 
                 # CRITICAL: Check if paused before attempting vote
@@ -1716,9 +1791,25 @@ class VoterInstance:
                 
                 if success:
                     self.status = "✅ Vote Successful"
+                    
+                    # CRITICAL: Close browser immediately to free memory (250MB)
+                    # Essential for low-memory servers (1GB RAM)
+                    logger.info(f"[CLEANUP] Closing browser after successful vote to free memory")
+                    try:
+                        await self.close_browser()
+                    except Exception as e:
+                        logger.error(f"[CLEANUP] Error closing browser: {e}")
+                    
                     logger.info(f"[CYCLE] Instance #{self.instance_id} waiting {RETRY_DELAY_COOLDOWN} minutes...")
                     await asyncio.sleep(RETRY_DELAY_COOLDOWN * 60)
                 else:
+                    # CRITICAL: Close browser after failure to free memory
+                    logger.info(f"[CLEANUP] Closing browser after failed vote to free memory")
+                    try:
+                        await self.close_browser()
+                    except Exception as e:
+                        logger.error(f"[CLEANUP] Error closing browser: {e}")
+                    
                     # Determine wait time based on failure type
                     if self.last_failure_type == "proxy_ip_mismatch":
                         # Proxy assigned different IP that already voted - retry in 5 min
@@ -1740,9 +1831,33 @@ class VoterInstance:
                 
         except asyncio.CancelledError:
             logger.info(f"[CYCLE] Instance #{self.instance_id} voting cycle cancelled")
+            # CRITICAL: Close browser on cancellation
+            try:
+                await self.close_browser()
+            except:
+                pass
         except Exception as e:
-            logger.error(f"[CYCLE] Instance #{self.instance_id} error in voting cycle: {e}")
-            self.status = "Error"
+            logger.error(f"[CYCLE] Instance #{self.instance_id} CRITICAL error in voting cycle: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            self.status = "⚠️ Cycle Error - Recovering"
+            
+            # CRITICAL: Close browser to prevent memory leak
+            try:
+                logger.error(f"[CYCLE] Instance #{self.instance_id} closing browser after crash...")
+                await self.close_browser()
+            except Exception as cleanup_error:
+                logger.error(f"[CYCLE] Instance #{self.instance_id} browser cleanup failed: {cleanup_error}")
+                # Force cleanup
+                self.page = None
+                self.context = None
+                self.browser = None
+                self.playwright = None
+            
+            # CRITICAL: Don't exit loop - retry after delay
+            logger.error(f"[CYCLE] Instance #{self.instance_id} will retry in 60 seconds...")
+            await asyncio.sleep(60)
+            # Loop will continue and retry initialization
     
     async def check_hourly_voting_limit(self) -> bool:
         """Check if hourly voting limit has been reached"""
@@ -1772,7 +1887,11 @@ class VoterInstance:
             
             # Also check page content for hourly limit text
             try:
-                page_content = await self.page.content()
+                # CRITICAL: Add timeout to prevent indefinite hang
+                page_content = await asyncio.wait_for(
+                    self.page.content(),
+                    timeout=10.0
+                )
                 hourly_limit_patterns = [
                     'hourly voting limit',
                     'voting button is temporarily disabled',
@@ -2352,34 +2471,56 @@ class MultiInstanceVoter:
         logger.info("[MONITOR] Browser monitoring service stopped")
     
     async def _browser_monitoring_loop(self):
-        """Monitor browsers and close idle ones"""
+        """Monitor browsers and close idle ones - AGGRESSIVE cleanup to prevent memory leaks"""
         try:
             while self.browser_monitoring_active:
                 # Check for idle browsers
                 for ip, instance in list(self.active_instances.items()):
                     try:
-                        # Only close browsers with Error status or hourly limit
-                        # DO NOT close browsers in Cooldown - they need to vote again!
-                        if instance.status == "Error":
-                            if instance.browser:
-                                await instance.close_browser()
-                                logger.info(f"[MONITOR] Closed browser for instance #{instance.instance_id}: Error status")
+                        # AGGRESSIVE: Close browsers in multiple scenarios to prevent leaks
+                        should_close = False
+                        close_reason = ""
+                        
+                        # 1. Error status
+                        if "Error" in instance.status:
+                            should_close = True
+                            close_reason = "Error status"
+                        
+                        # 2. Browser stuck open for too long (>5 minutes)
+                        elif instance.browser and instance.browser_start_time:
+                            browser_age = (datetime.now() - instance.browser_start_time).total_seconds()
+                            if browser_age > 300:  # 5 minutes
+                                should_close = True
+                                close_reason = f"Browser stuck open for {int(browser_age)}s"
+                        
+                        # 3. Global hourly limit (with 60s delay to prevent false positives)
                         elif self.global_hourly_limit and instance.browser:
-                            # Only close browsers if hourly limit has been active for >60 seconds
-                            # This prevents closing browsers on false positive detections
                             if self.hourly_limit_start_time:
                                 time_in_limit = (datetime.now() - self.hourly_limit_start_time).total_seconds()
                                 if time_in_limit > 60:  # Only close after 60 seconds
-                                    await instance.close_browser()
-                                    logger.info(f"[MONITOR] Closed browser for instance #{instance.instance_id}: Global hourly limit (active for {int(time_in_limit)}s)")
+                                    should_close = True
+                                    close_reason = f"Global hourly limit (active for {int(time_in_limit)}s)"
                                 else:
                                     logger.debug(f"[MONITOR] Skipping browser close for instance #{instance.instance_id}: Hourly limit active for only {int(time_in_limit)}s (waiting for 60s)")
                             else:
                                 # No start time set, close immediately (backward compatibility)
-                                await instance.close_browser()
-                                logger.info(f"[MONITOR] Closed browser for instance #{instance.instance_id}: Global hourly limit")
+                                should_close = True
+                                close_reason = "Global hourly limit"
+                        
+                        # Close browser if any condition met
+                        if should_close and instance.browser:
+                            logger.warning(f"[MONITOR] Closing browser for instance #{instance.instance_id}: {close_reason}")
+                            await instance.close_browser()
+                            
                     except Exception as e:
                         logger.error(f"[MONITOR] Error monitoring instance #{instance.instance_id}: {e}")
+                        # Try force cleanup on error
+                        try:
+                            if instance.browser:
+                                logger.error(f"[MONITOR] Force closing browser for instance #{instance.instance_id} after error")
+                                await instance.close_browser()
+                        except:
+                            pass
                 
                 await asyncio.sleep(60)  # Check every minute
                 
