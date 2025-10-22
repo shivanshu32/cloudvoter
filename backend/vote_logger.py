@@ -418,67 +418,100 @@ class VoteLogger:
             return stats
     
     def get_hourly_analytics(self) -> List[Dict]:
-        """Get hourly voting analytics from CSV file"""
+        """Get hourly voting analytics from CSV file with hourly limit data"""
         analytics = {}
         
         try:
-            if not os.path.exists(self.log_file):
-                return []
-            
-            with open(self.log_file, 'r', newline='', encoding='utf-8') as f:
-                reader = csv.DictReader(f)
-                
-                for row in reader:
-                    try:
-                        # Parse timestamp
-                        timestamp_str = row.get('timestamp', '')
-                        if not timestamp_str:
-                            continue
-                        
-                        # Parse datetime and round to hour
-                        dt = datetime.fromisoformat(timestamp_str)
-                        hour_key = dt.replace(minute=0, second=0, microsecond=0).isoformat()
-                        
-                        # Initialize hour data if not exists
-                        if hour_key not in analytics:
-                            analytics[hour_key] = {
-                                'hour': hour_key,
-                                'total_attempts': 0,
-                                'successful_votes': 0,
-                                'failed_votes': 0,
-                                'hourly_limit_count': 0,
-                                'votes_before_limit': 0
-                            }
-                        
-                        # Count this attempt
-                        analytics[hour_key]['total_attempts'] += 1
-                        
-                        # Check status
-                        status = row.get('status', '').lower()
-                        failure_type = row.get('failure_type', '').lower()
-                        cooldown_message = row.get('cooldown_message', '').lower()
-                        
-                        if 'success' in status:
-                            analytics[hour_key]['successful_votes'] += 1
-                        elif 'fail' in status or 'error' in status:
-                            analytics[hour_key]['failed_votes'] += 1
-                        
-                        # Check for hourly limit
-                        is_hourly_limit = False
-                        if 'hourly' in failure_type or 'limit' in failure_type:
-                            is_hourly_limit = True
-                        elif 'hourly' in cooldown_message or 'limit' in cooldown_message:
-                            is_hourly_limit = True
-                        
-                        if is_hourly_limit:
-                            # Only count the first hourly limit in this hour
-                            if analytics[hour_key]['hourly_limit_count'] == 0:
-                                analytics[hour_key]['votes_before_limit'] = analytics[hour_key]['successful_votes']
-                            analytics[hour_key]['hourly_limit_count'] += 1
+            # Step 1: Read voting logs to get vote counts per hour
+            if os.path.exists(self.log_file):
+                with open(self.log_file, 'r', newline='', encoding='utf-8') as f:
+                    reader = csv.DictReader(f)
                     
-                    except Exception as e:
-                        # Skip malformed rows
-                        continue
+                    for row in reader:
+                        try:
+                            # Parse timestamp
+                            timestamp_str = row.get('timestamp', '')
+                            if not timestamp_str:
+                                continue
+                            
+                            # Parse datetime and round to hour
+                            dt = datetime.fromisoformat(timestamp_str)
+                            hour_key = dt.replace(minute=0, second=0, microsecond=0).isoformat()
+                            
+                            # Initialize hour data if not exists
+                            if hour_key not in analytics:
+                                analytics[hour_key] = {
+                                    'hour': hour_key,
+                                    'total_attempts': 0,
+                                    'successful_votes': 0,
+                                    'failed_votes': 0,
+                                    'hourly_limit_count': 0,
+                                    'votes_before_limit': None  # Will be set from hourly_limit_logs.csv
+                                }
+                            
+                            # Count this attempt
+                            analytics[hour_key]['total_attempts'] += 1
+                            
+                            # Check status
+                            status = row.get('status', '').lower()
+                            
+                            if 'success' in status:
+                                analytics[hour_key]['successful_votes'] += 1
+                            elif 'fail' in status or 'error' in status:
+                                analytics[hour_key]['failed_votes'] += 1
+                        
+                        except Exception as e:
+                            # Skip malformed rows
+                            continue
+            
+            # Step 2: Read hourly_limit_logs.csv to get actual hourly limit detections
+            if os.path.exists(self.hourly_limit_log_file):
+                with open(self.hourly_limit_log_file, 'r', newline='', encoding='utf-8') as f:
+                    reader = csv.DictReader(f)
+                    
+                    for row in reader:
+                        try:
+                            # Parse timestamp
+                            timestamp_str = row.get('timestamp', '')
+                            if not timestamp_str:
+                                continue
+                            
+                            # Parse datetime and round to hour
+                            dt = datetime.fromisoformat(timestamp_str)
+                            hour_key = dt.replace(minute=0, second=0, microsecond=0).isoformat()
+                            
+                            # Initialize hour data if not exists (in case no votes in that hour)
+                            if hour_key not in analytics:
+                                analytics[hour_key] = {
+                                    'hour': hour_key,
+                                    'total_attempts': 0,
+                                    'successful_votes': 0,
+                                    'failed_votes': 0,
+                                    'hourly_limit_count': 0,
+                                    'votes_before_limit': None
+                                }
+                            
+                            # Count hourly limit detection
+                            analytics[hour_key]['hourly_limit_count'] += 1
+                            
+                            # Get vote count from hourly limit log
+                            vote_count_str = row.get('vote_count', '0')
+                            try:
+                                vote_count = int(vote_count_str)
+                                # Use the FIRST hourly limit's vote count (earliest detection)
+                                if analytics[hour_key]['votes_before_limit'] is None:
+                                    analytics[hour_key]['votes_before_limit'] = vote_count
+                            except (ValueError, TypeError):
+                                pass
+                        
+                        except Exception as e:
+                            # Skip malformed rows
+                            continue
+            
+            # Step 3: Set votes_before_limit to 0 for hours with no limit
+            for hour_key in analytics:
+                if analytics[hour_key]['votes_before_limit'] is None:
+                    analytics[hour_key]['votes_before_limit'] = 0
             
             # Convert to list and sort by hour (newest first)
             result = list(analytics.values())
