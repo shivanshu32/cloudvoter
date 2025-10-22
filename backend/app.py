@@ -1757,19 +1757,15 @@ def auto_start_monitoring():
                                     if ready_instances:
                                         logger.info(f"🔍 Found {len(ready_instances)} ready instances")
                                         
-                                        # FIXED: Launch ALL ready instances with minimal delay
-                                        launched_count = 0
-                                        for instance_info in ready_instances:
-                                            success = await launch_instance_from_session(instance_info)
-                                            if success:
-                                                launched_count += 1
-                                                logger.info(f"✅ Launched instance #{instance_info['instance_id']}, {len(ready_instances)-launched_count} remaining")
-                                                # OPTIMIZED: Minimal delay (0.5s) for faster voting cycles
-                                                await asyncio.sleep(0.5)
-                                        
-                                        if launched_count > 0:
-                                            logger.info(f"✅ Launched {launched_count} instances total")
-                                            await asyncio.sleep(3)
+                                        # CRITICAL: Launch ONLY FIRST ready instance to prevent memory overload
+                                        # This matches startup behavior and prevents 4 browsers open simultaneously
+                                        instance_info = ready_instances[0]
+                                        success = await launch_instance_from_session(instance_info)
+                                        if success:
+                                            logger.info(f"✅ Launched instance #{instance_info['instance_id']}")
+                                            logger.info(f"📊 {len(ready_instances)-1} more instances waiting (will check in {SESSION_SCAN_INTERVAL}s)")
+                                        else:
+                                            logger.warning(f"❌ Failed to launch instance #{instance_info['instance_id']}")
                                 
                             except Exception as e:
                                 logger.error(f"❌ Error checking ready instances: {e}")

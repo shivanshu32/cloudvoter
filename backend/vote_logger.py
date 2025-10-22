@@ -17,7 +17,11 @@ class VoteLogger:
     
     def __init__(self, log_file='voting_logs.csv'):
         self.log_file = log_file
-        self.hourly_limit_log_file = 'hourly_limit_logs.csv'
+        
+        # CRITICAL: Use same directory as main log file for hourly limit log
+        log_dir = os.path.dirname(os.path.abspath(log_file))
+        self.hourly_limit_log_file = os.path.join(log_dir, 'hourly_limit_logs.csv')
+        
         self._file_lock = threading.Lock()  # Thread-safe file access
         self._hourly_limit_lock = threading.Lock()  # Thread-safe hourly limit logging
         self.fieldnames = [
