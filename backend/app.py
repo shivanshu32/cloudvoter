@@ -751,6 +751,25 @@ def get_hourly_analytics():
             'message': str(e)
         }), 500
 
+@app.route('/api/hourly-limit-logs', methods=['GET'])
+def get_hourly_limit_logs():
+    """Get hourly limit detection logs"""
+    try:
+        limit = request.args.get('limit', 100, type=int)
+        logs = vote_logger.get_hourly_limit_logs(limit=limit)
+        return jsonify({
+            'status': 'success',
+            'logs': logs
+        })
+    except Exception as e:
+        logger.error(f"❌ Error getting hourly limit logs: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        }), 500
+
 @app.route('/api/logs', methods=['GET'])
 def get_recent_logs():
     """Get recent logs from cloudvoter.log file"""

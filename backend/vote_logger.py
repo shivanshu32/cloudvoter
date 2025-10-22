@@ -17,7 +17,9 @@ class VoteLogger:
     
     def __init__(self, log_file='voting_logs.csv'):
         self.log_file = log_file
+        self.hourly_limit_log_file = 'hourly_limit_logs.csv'
         self._file_lock = threading.Lock()  # Thread-safe file access
+        self._hourly_limit_lock = threading.Lock()  # Thread-safe hourly limit logging
         self.fieldnames = [
             'timestamp',
             'instance_id', 
@@ -38,6 +40,19 @@ class VoteLogger:
             'browser_closed'
         ]
         
+        # Hourly limit log fieldnames
+        self.hourly_limit_fieldnames = [
+            'timestamp',
+            'detection_time',
+            'instance_id',
+            'instance_name',
+            'vote_count',
+            'proxy_ip',
+            'session_id',
+            'cooldown_message',
+            'failure_type'
+        ]
+        
         # Session-based counters (reset when script starts)
         self.session_total_attempts = 0
         self.session_successful_votes = 0
@@ -46,6 +61,7 @@ class VoteLogger:
         self._counter_lock = threading.Lock()  # Thread-safe counter access
         
         self._ensure_log_file()
+        self._ensure_hourly_limit_log_file()
     
     def _ensure_log_file(self):
         """Ensure log file exists with headers"""
@@ -54,6 +70,94 @@ class VoteLogger:
                 with open(self.log_file, 'w', newline='', encoding='utf-8') as f:
                     writer = csv.DictWriter(f, fieldnames=self.fieldnames)
                     writer.writeheader()
+    
+    def _ensure_hourly_limit_log_file(self):
+        """Ensure hourly limit log file exists with headers"""
+        with self._hourly_limit_lock:  # Thread-safe file creation
+            if not os.path.exists(self.hourly_limit_log_file):
+                with open(self.hourly_limit_log_file, 'w', newline='', encoding='utf-8') as f:
+                    writer = csv.DictWriter(f, fieldnames=self.hourly_limit_fieldnames)
+                    writer.writeheader()
+    
+    def log_hourly_limit(self,
+                        instance_id: int,
+                        instance_name: str,
+                        vote_count: int,
+                        proxy_ip: str = "",
+                        session_id: str = "",
+                        cooldown_message: str = "",
+                        failure_type: str = "") -> None:
+        """
+        Log hourly limit detection to separate CSV
+        
+        Args:
+            instance_id: Instance identifier
+            instance_name: Human readable instance name
+            vote_count: Total votes when limit was detected
+            proxy_ip: IP address used
+            session_id: BrightData session ID
+            cooldown_message: Cooldown message detected
+            failure_type: Type of failure
+        """
+        try:
+            detection_time = datetime.now()
+            
+            log_entry = {
+                'timestamp': detection_time.isoformat(),
+                'detection_time': detection_time.strftime('%Y-%m-%d %H:%M:%S'),
+                'instance_id': instance_id,
+                'instance_name': instance_name,
+                'vote_count': vote_count,
+                'proxy_ip': proxy_ip,
+                'session_id': session_id,
+                'cooldown_message': cooldown_message,
+                'failure_type': failure_type
+            }
+            
+            # Thread-safe CSV writing
+            with self._hourly_limit_lock:
+                with open(self.hourly_limit_log_file, 'a', newline='', encoding='utf-8') as file:
+                    writer = csv.DictWriter(file, fieldnames=self.hourly_limit_fieldnames)
+                    writer.writerow(log_entry)
+                    file.flush()
+            
+            print(f"[HOURLY_LIMIT_LOG] Instance #{instance_id} - Vote count: {vote_count}")
+            
+        except Exception as e:
+            print(f"Error logging hourly limit: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    def get_hourly_limit_logs(self, limit: int = 100) -> List[Dict]:
+        """
+        Get recent hourly limit logs
+        
+        Args:
+            limit: Maximum number of logs to return (default 100)
+            
+        Returns:
+            List of hourly limit log entries (newest first)
+        """
+        try:
+            if not os.path.exists(self.hourly_limit_log_file):
+                return []
+            
+            logs = []
+            with self._hourly_limit_lock:
+                with open(self.hourly_limit_log_file, 'r', newline='', encoding='utf-8') as file:
+                    reader = csv.DictReader(file)
+                    for row in reader:
+                        logs.append(row)
+            
+            # Sort by timestamp (newest first) and limit
+            logs.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
+            return logs[:limit]
+            
+        except Exception as e:
+            print(f"Error reading hourly limit logs: {e}")
+            import traceback
+            traceback.print_exc()
+            return []
     
     def log_vote_attempt(self, 
                         instance_id: int,

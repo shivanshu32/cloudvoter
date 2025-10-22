@@ -1224,6 +1224,17 @@ class VoterInstance:
                             browser_closed=True
                         )
                         
+                        # Log hourly limit detection to separate CSV
+                        self.vote_logger.log_hourly_limit(
+                            instance_id=self.instance_id,
+                            instance_name=f"Instance_{self.instance_id}",
+                            vote_count=self.vote_count,
+                            proxy_ip=self.proxy_ip,
+                            session_id=self.session_id or "",
+                            cooldown_message=cooldown_message,
+                            failure_type="global_hourly_limit" if is_global_limit else "instance_cooldown"
+                        )
+                        
                         # Close browser before cooldown
                         logger.info(f"[CLEANUP] Closing browser after cooldown detection")
                         await self.close_browser()
