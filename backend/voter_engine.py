@@ -1225,10 +1225,12 @@ class VoterInstance:
                         )
                         
                         # Log hourly limit detection to separate CSV
+                        # Use final_count if available, otherwise initial_count, otherwise 0
+                        actual_vote_count = final_count if final_count is not None else (initial_count if initial_count is not None else 0)
                         self.vote_logger.log_hourly_limit(
                             instance_id=self.instance_id,
                             instance_name=f"Instance_{self.instance_id}",
-                            vote_count=self.vote_count,
+                            vote_count=actual_vote_count,
                             proxy_ip=self.proxy_ip,
                             session_id=self.session_id or "",
                             cooldown_message=cooldown_message,
@@ -2183,7 +2185,16 @@ class MultiInstanceVoter:
                 logger.info(f"[SUCCESS] Launched instance #{next_instance_id} with IP: {proxy_ip}")
                 
                 # Navigate and start voting cycle
-                await instance.navigate_to_voting_page()
+                nav_success = await instance.navigate_to_voting_page()
+                
+                if not nav_success:
+                    logger.error(f"[LAUNCH] Instance #{next_instance_id} navigation failed - closing browser")
+                    # CRITICAL: Close browser on navigation failure to prevent memory leak
+                    try:
+                        await instance.close_browser()
+                    except Exception as cleanup_error:
+                        logger.error(f"[LAUNCH] Browser cleanup failed: {cleanup_error}")
+                    return False
                 
                 if await instance.check_login_required():
                     logger.info(f"[LAUNCH] Instance #{next_instance_id} requires login")
@@ -2286,8 +2297,13 @@ class MultiInstanceVoter:
                         logger.info(f"[SESSION] Instance #{instance_id} starting voting cycle")
                         asyncio.create_task(instance.run_voting_cycle())
                 else:
-                    logger.error(f"[SESSION] Instance #{instance_id} navigation failed, will retry")
+                    logger.error(f"[SESSION] Instance #{instance_id} navigation failed - closing browser")
                     instance.status = "⚠️ Navigation Failed"
+                    # CRITICAL: Close browser on navigation failure to prevent memory leak
+                    try:
+                        await instance.close_browser()
+                    except Exception as cleanup_error:
+                        logger.error(f"[SESSION] Browser cleanup failed: {cleanup_error}")
                 
                 return instance
             
