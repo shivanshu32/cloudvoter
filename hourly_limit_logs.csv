@@ -1,0 +1,19 @@
+timestamp,detection_time,instance_id,instance_name,vote_count,proxy_ip,session_id,cooldown_message,failure_type
+2025-10-24T00:31:40.868730,2025-10-24 00:31:40,16,Instance_16,15229,119.13.239.143,a3pvfdgk4d,You have voted already! Please come back at your next voting time of 30 minutes.,instance_cooldown
+2025-10-24T00:32:08.727535,2025-10-24 00:32:08,17,Instance_17,15229,119.13.233.58,3dp6uog0i4,You have voted already! Please come back at your next voting time of 30 minutes.,instance_cooldown
+2025-10-24T00:32:45.537278,2025-10-24 00:32:45,18,Instance_18,15230,119.13.238.105,xht06kj9ls,You have voted already! Please come back at your next voting time of 30 minutes.,instance_cooldown
+2025-10-24T02:02:11.636178,2025-10-24 02:02:11,10,Instance_10,15251,77.83.69.212,w7gfpgsxwj,You have voted already! Please come back at your next voting time of 30 minutes.,instance_cooldown
+2025-10-24T02:04:51.029771,2025-10-24 02:04:51,12,Instance_12,15256,119.13.236.158,hw17xcwmw2,Someone has already voted out of this IP address: 77.83.68.236 Please come back at your next voting time of 30 minutes.,instance_cooldown
+2025-10-24T02:05:12.724429,2025-10-24 02:05:12,16,Instance_16,15257,119.13.239.143,a3pvfdgk4d,You have voted already! Please come back at your next voting time of 30 minutes.,instance_cooldown
+2025-10-24T02:05:46.308211,2025-10-24 02:05:46,23,Instance_23,15258,119.13.239.19,f6sv919o8p,You have voted already! Please come back at your next voting time of 30 minutes.,instance_cooldown
+2025-10-24T02:06:43.742235,2025-10-24 02:06:43,25,Instance_25,15263,43.225.188.75,mk21b8riv1,You have voted already! Please come back at your next voting time of 30 minutes.,instance_cooldown
+2025-10-24T03:04:34.595930,2025-10-24 03:04:34,10,Instance_10,15272,77.83.69.212,w7gfpgsxwj,You have voted already! Please come back at your next voting time of 30 minutes.,instance_cooldown
+2025-10-24T03:08:08.863648,2025-10-24 03:08:08,17,Instance_17,15281,119.13.233.58,3dp6uog0i4,You have voted already! Please come back at your next voting time of 30 minutes.,instance_cooldown
+2025-10-24T08:45:15.432590,2025-10-24 08:45:15,14,Instance_14,15370,119.13.230.249,ufu5uv5oq3,You have voted already! Please come back at your next voting time of 30 minutes.,instance_cooldown
+2025-10-24T08:45:17.897746,2025-10-24 08:45:17,4,Instance_4,15370,119.13.233.164,au80g1m03x,You have voted already! Please come back at your next voting time of 30 minutes.,instance_cooldown
+2025-10-24T08:45:29.484073,2025-10-24 08:45:29,10,Instance_10,15370,77.83.69.212,w7gfpgsxwj,You have voted already! Please come back at your next voting time of 30 minutes.,instance_cooldown
+2025-10-24T08:45:32.454284,2025-10-24 08:45:32,5,Instance_5,15372,77.83.69.80,ioxp5o4qg1,Someone has already voted out of this IP address: 43.225.188.243 Please come back at your next voting time of 30 minutes.,instance_cooldown
+2025-10-24T08:45:43.126730,2025-10-24 08:45:43,16,Instance_16,15374,119.13.239.143,a3pvfdgk4d,You have voted already! Please come back at your next voting time of 30 minutes.,instance_cooldown
+2025-10-24T08:45:53.164171,2025-10-24 08:45:53,17,Instance_17,15374,119.13.233.58,3dp6uog0i4,You have voted already! Please come back at your next voting time of 30 minutes.,instance_cooldown
+2025-10-24T08:46:30.453987,2025-10-24 08:46:30,6,Instance_6,15374,119.13.239.221,s10ygevrbu,You have voted already! Please come back at your next voting time of 30 minutes.,instance_cooldown
+2025-10-24T08:47:49.726564,2025-10-24 08:47:49,13,Instance_13,15374,77.83.68.155,r3jkd8wbc0,You have voted already! Please come back at your next voting time of 30 minutes.,instance_cooldown

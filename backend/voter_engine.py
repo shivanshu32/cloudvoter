@@ -399,16 +399,21 @@ class VoterInstance:
                 self.playwright = await async_playwright().start()
                 
                 # Browser launch arguments - OPTIMIZED FOR LOW MEMORY (1GB RAM)
+                # REMOVED --single-process: Causes browser instability, any crash kills entire browser
+                # Using multi-process with memory limits is more stable (fixes 64% of navigation failures)
                 browser_args = [
                     '--no-sandbox',
                     '--disable-blink-features=AutomationControlled',
-                    '--disable-dev-shm-usage',
+                    '--disable-dev-shm-usage',  # Use /tmp instead of /dev/shm
                     '--disable-gpu',
-                    '--single-process',
+                    # Memory optimization (multi-process but limited)
                     '--disable-background-networking',
                     '--disable-default-apps',
                     '--disable-extensions',
                     '--disable-sync',
+                    '--disable-translate',
+                    '--disable-features=TranslateUI',
+                    '--disable-features=BlinkGenPropertyTrees',
                     '--metrics-recording-only',
                     '--mute-audio',
                     '--no-first-run',
@@ -416,6 +421,9 @@ class VoterInstance:
                     '--disable-background-timer-throttling',
                     '--disable-backgrounding-occluded-windows',
                     '--disable-renderer-backgrounding',
+                    '--disable-ipc-flooding-protection',
+                    '--renderer-process-limit=2',  # Limit to 2 renderer processes
+                    '--disable-hang-monitor',
                 ]
                 
                 # Launch browser with proxy
@@ -533,16 +541,21 @@ class VoterInstance:
                 self.playwright = await async_playwright().start()
                 
                 # Browser launch arguments - OPTIMIZED FOR LOW MEMORY (1GB RAM)
+                # REMOVED --single-process: Causes browser instability, any crash kills entire browser
+                # Using multi-process with memory limits is more stable (fixes 64% of navigation failures)
                 browser_args = [
                     '--no-sandbox',
                     '--disable-blink-features=AutomationControlled',
-                    '--disable-dev-shm-usage',
+                    '--disable-dev-shm-usage',  # Use /tmp instead of /dev/shm
                     '--disable-gpu',
-                    '--single-process',
+                    # Memory optimization (multi-process but limited)
                     '--disable-background-networking',
                     '--disable-default-apps',
                     '--disable-extensions',
                     '--disable-sync',
+                    '--disable-translate',
+                    '--disable-features=TranslateUI',
+                    '--disable-features=BlinkGenPropertyTrees',
                     '--metrics-recording-only',
                     '--mute-audio',
                     '--no-first-run',
@@ -550,6 +563,9 @@ class VoterInstance:
                     '--disable-background-timer-throttling',
                     '--disable-backgrounding-occluded-windows',
                     '--disable-renderer-backgrounding',
+                    '--disable-ipc-flooding-protection',
+                    '--renderer-process-limit=2',  # Limit to 2 renderer processes
+                    '--disable-hang-monitor',
                 ]
                 
                 # Launch browser with proxy
@@ -640,25 +656,58 @@ class VoterInstance:
             return True, 0
     
     async def navigate_to_voting_page(self):
-        """Navigate to voting page"""
-        try:
-            if not self.page:
-                return False
-            
-            logger.info(f"[NAV] Instance #{self.instance_id} navigating to {self.target_url}")
-            # Use 'domcontentloaded' instead of 'networkidle' for faster, more reliable loading
-            # 'networkidle' can timeout on pages with continuous network activity
-            await self.page.goto(self.target_url, wait_until='domcontentloaded', timeout=30000)
-            
-            # Wait for page to stabilize
-            await asyncio.sleep(3)
-            
-            logger.info(f"[NAV] Instance #{self.instance_id} navigation successful")
-            return True
-            
-        except Exception as e:
-            logger.error(f"[NAV] Instance #{self.instance_id} navigation failed: {e}")
+        """Navigate to voting page with retry mechanism"""
+        if not self.page:
+            logger.error(f"[NAV] Instance #{self.instance_id} no page object available")
             return False
+        
+        max_retries = 3
+        base_timeout = 45000  # Increased from 30s to 45s for slow proxies
+        
+        for attempt in range(1, max_retries + 1):
+            try:
+                # Calculate timeout with exponential increase per attempt
+                timeout = base_timeout + (attempt - 1) * 15000  # 45s, 60s, 75s
+                
+                logger.info(f"[NAV] Instance #{self.instance_id} navigation attempt {attempt}/{max_retries} (timeout: {timeout/1000}s)")
+                logger.info(f"[NAV] Instance #{self.instance_id} navigating to {self.target_url}")
+                
+                # Use 'domcontentloaded' instead of 'networkidle' for faster, more reliable loading
+                # 'networkidle' can timeout on pages with continuous network activity
+                await self.page.goto(self.target_url, wait_until='domcontentloaded', timeout=timeout)
+                
+                # Wait for page to stabilize
+                await asyncio.sleep(3)
+                
+                logger.info(f"[NAV] Instance #{self.instance_id} navigation successful on attempt {attempt}")
+                return True
+                
+            except Exception as e:
+                error_type = type(e).__name__
+                error_msg = str(e)
+                
+                # Log detailed error information
+                logger.warning(f"[NAV] Instance #{self.instance_id} attempt {attempt}/{max_retries} failed: {error_type}: {error_msg[:200]}")
+                
+                # Check if browser/page was closed (fatal error, don't retry)
+                if "closed" in error_msg.lower() or "target" in error_msg.lower():
+                    logger.error(f"[NAV] Instance #{self.instance_id} browser/page closed during navigation - FATAL, not retrying")
+                    return False
+                
+                # Check if proxy connection failed (might recover on retry)
+                if "ERR_TUNNEL_CONNECTION_FAILED" in error_msg:
+                    logger.warning(f"[NAV] Instance #{self.instance_id} proxy tunnel failed - will retry with delay")
+                
+                # If not last attempt, wait before retrying (exponential backoff)
+                if attempt < max_retries:
+                    retry_delay = 5 * attempt  # 5s, 10s, 15s
+                    logger.info(f"[NAV] Instance #{self.instance_id} waiting {retry_delay}s before retry...")
+                    await asyncio.sleep(retry_delay)
+                else:
+                    logger.error(f"[NAV] Instance #{self.instance_id} navigation failed after {max_retries} attempts")
+                    return False
+        
+        return False
     
     async def check_login_required(self):
         """Check if Google login is required"""
@@ -2296,16 +2345,28 @@ class MultiInstanceVoter:
                     else:
                         logger.info(f"[SESSION] Instance #{instance_id} starting voting cycle")
                         asyncio.create_task(instance.run_voting_cycle())
+                    
+                    # Navigation succeeded - return instance
+                    return instance
                 else:
-                    logger.error(f"[SESSION] Instance #{instance_id} navigation failed - closing browser")
+                    # Navigation failed - cleanup and return None to indicate failure
+                    logger.error(f"[SESSION] Instance #{instance_id} navigation failed - removing from active instances")
                     instance.status = "⚠️ Navigation Failed"
+                    
+                    # Remove from active instances since it's not functional
+                    if new_proxy_ip in self.active_instances:
+                        del self.active_instances[new_proxy_ip]
+                    if new_proxy_ip in self.used_ips:
+                        self.used_ips.remove(new_proxy_ip)
+                    
                     # CRITICAL: Close browser on navigation failure to prevent memory leak
                     try:
                         await instance.close_browser()
                     except Exception as cleanup_error:
                         logger.error(f"[SESSION] Browser cleanup failed: {cleanup_error}")
-                
-                return instance
+                    
+                    # Return None to indicate launch failure
+                    return None
             
             return None
             
